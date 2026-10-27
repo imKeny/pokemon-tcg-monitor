@@ -1,0 +1,6 @@
+.env
+.git
+__pycache__
+*.py[cod]
+search_state.json
+stock_state.json

@@ -1,0 +1,1753 @@
+#!/usr/bin/env python3
+"""Monitor configured public product catalogs for Pokémon TCG stock."""
+
+import argparse
+import base64
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from email.utils import parsedate_to_datetime
+import hashlib
+from html.parser import HTMLParser
+from html import unescape
+import json
+import logging
+import os
+from pathlib import Path
+import random
+import re
+import sys
+import time
+import unicodedata
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urljoin, urlparse, urlunparse
+from urllib.request import Request, urlopen
+
+
+LOG = logging.getLogger("pokemon-restock")
+MIN_INTERVAL_SECONDS = 60
+MAX_RESPONSE_BYTES = 5_000_000
+EBAY_PRICE_CACHE_TTL_SECONDS = 24 * 60 * 60
+EBAY_EMPTY_CACHE_TTL_SECONDS = 6 * 60 * 60
+SHOPIFY_PRODUCT_LIMIT = 250
+MIN_SHOPIFY_PRODUCT_LIMIT = 1
+SEALED_PRODUCT_TERMS = (
+    "booster",
+    "display",
+    "etb",
+    "elite trainer",
+    "dresseur d'elite",
+    "dresseur elite",
+    "coffret",
+    "collection premium",
+    "collection illustration",
+    "pokebox",
+    "mini tin",
+    "tin",
+    "blister",
+    "bundle",
+    "tripack",
+    "duopack",
+    "boite de boosters",
+    "box de boosters",
+    "collection box",
+    "gift box",
+    "anniversary box",
+    "festival box",
+    "special collection",
+)
+EXCLUDED_PRODUCT_TERMS = (
+    "type:single",
+    "carte a l'unite",
+    "carte individuelle",
+    "single card",
+    "figurine",
+    "peluche",
+    "plush",
+    "deckbox",
+    "deck box",
+    "classeur",
+    "album",
+    "pochette",
+    "sleeve",
+    "playmat",
+    "tapis",
+    "porte-cle",
+    "porte cle",
+    "accessoire",
+    "goodies",
+)
+
+
+def normalize(text):
+    text = text.replace("’", "'").replace("‘", "'")
+    text = unicodedata.normalize("NFKD", text.casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def contains_product_term(text, term):
+    term_pattern = re.escape(term).replace(r"\ ", r"\s+")
+    return re.search(r"(?<!\w)" + term_pattern + r"s?(?!\w)", text) is not None
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=Path("products.json"))
+    parser.add_argument("--state", type=Path, default=Path("search_state.json"))
+    parser.add_argument("--stock", type=Path, default=Path("stock.json"))
+    parser.add_argument(
+        "--market-cache",
+        type=Path,
+        default=Path("market_price_cache.json"),
+        help="cache for optional eBay market-price lookups",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=300,
+        help="seconds between checks (default: 300; minimum: 60)",
+    )
+    parser.add_argument(
+        "--test-discord",
+        action="store_true",
+        help="send one test message using DISCORD_WEBHOOK_URL from .env",
+    )
+    args = parser.parse_args()
+    if args.interval < MIN_INTERVAL_SECONDS:
+        parser.error(f"--interval must be at least {MIN_INTERVAL_SECONDS} seconds")
+    return args
+
+
+def load_local_environment(path):
+    if not path.exists():
+        return
+    accepted_keys = {
+        "DISCORD_WEBHOOK_URL",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "SHOPIFY_STORES",
+        "EBAY_CLIENT_ID",
+        "EBAY_CLIENT_SECRET",
+    }
+    with path.open(encoding="utf-8") as env_file:
+        for line_number, line in enumerate(env_file, start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            key, separator, value = line.partition("=")
+            if not separator or not key.strip():
+                raise ValueError(f"Invalid environment entry in {path}:{line_number}")
+            key = key.strip()
+            if key not in accepted_keys:
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+
+
+def normalize_store_url(url, name):
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError(f"{name} needs a non-empty Shopify store URL")
+    parsed = urlparse(url.strip())
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.port not in (None, 443)
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/", "/products.json")
+    ):
+        raise ValueError(
+            f"{name} must be an HTTPS store root or /products.json URL"
+        )
+    hostname = parsed.hostname.lower()
+    if "." not in hostname or hostname.endswith((".local", ".internal")):
+        raise ValueError(f"{name} must use a public store domain")
+    return urlunparse(("https", hostname, "", "", "", ""))
+
+
+def load_stores(path):
+    with path.open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    if not isinstance(config, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    configured_stores = config.get("stores", config.get("shopify_stores", []))
+    if not isinstance(configured_stores, list):
+        raise ValueError("'stores' must be a list")
+    retail_prices = config.get("retail_prices", [])
+    if not isinstance(retail_prices, list):
+        raise ValueError("'retail_prices' must be a list")
+    retail_estimates = config.get("retail_estimates", [])
+    if not isinstance(retail_estimates, list):
+        raise ValueError("'retail_estimates' must be a list")
+
+    stores = {}
+    for index, store in enumerate(configured_stores, start=1):
+        if not isinstance(store, dict):
+            raise ValueError(f"Store #{index} must be a JSON object")
+        name = store.get("name", f"Store #{index}")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Store #{index} needs a non-empty name")
+        platform = store.get("platform", "shopify")
+        if platform not in ("shopify", "woocommerce", "philibert_html"):
+            raise ValueError(
+                f"Store #{index} platform must be 'shopify', 'woocommerce', "
+                "or 'philibert_html'"
+            )
+        url = normalize_store_url(store.get("url"), f"Store #{index}")
+        hostname = urlparse(url).hostname
+        catalog_url = store.get("catalog_url")
+        if platform == "philibert_html":
+            catalog_url = catalog_url or urljoin(url + "/", "fr/212-pokemon")
+            parsed_catalog_url = urlparse(catalog_url)
+            if (
+                parsed_catalog_url.scheme != "https"
+                or parsed_catalog_url.hostname != hostname
+                or parsed_catalog_url.username
+                or parsed_catalog_url.password
+                or parsed_catalog_url.fragment
+            ):
+                raise ValueError(
+                    f"Store #{index} catalog_url must be an HTTPS URL "
+                    "on the configured store host"
+                )
+        elif catalog_url is not None:
+            raise ValueError(
+                f"Store #{index} catalog_url is only supported for philibert_html"
+            )
+        collection = store.get("collection")
+        category_ids = store.get("product_category_ids", [])
+        if platform == "shopify" and category_ids:
+            raise ValueError(
+                f"Store #{index} product_category_ids are only supported "
+                "for WooCommerce"
+            )
+        if collection is not None and (
+            not isinstance(collection, str)
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", collection)
+        ):
+            raise ValueError(
+                f"Shopify store #{index} collection must be a lowercase "
+                "Shopify collection handle"
+            )
+        if (
+            not isinstance(category_ids, list)
+            or any(
+                not isinstance(category_id, int)
+                or isinstance(category_id, bool)
+                or category_id <= 0
+                for category_id in category_ids
+            )
+        ):
+            raise ValueError(
+                f"Store #{index} product_category_ids must be a list of "
+                "positive integers"
+            )
+        store_id = f"{platform}-{hostname}"
+        if collection:
+            if platform != "shopify":
+                raise ValueError(
+                    f"Store #{index} collection is only supported for Shopify"
+                )
+            store_id = f"{store_id}-collection-{collection}"
+        stores[hostname] = {
+            "id": store_id,
+            "name": name.strip(),
+            "url": url,
+            "platform": platform,
+            "collection": collection,
+            "catalog_url": catalog_url,
+            "product_category_ids": category_ids,
+        }
+        product_limit = store.get("product_limit", SHOPIFY_PRODUCT_LIMIT)
+        if (
+            not isinstance(product_limit, int)
+            or isinstance(product_limit, bool)
+            or not MIN_SHOPIFY_PRODUCT_LIMIT <= product_limit <= SHOPIFY_PRODUCT_LIMIT
+        ):
+            raise ValueError(
+                f"Store #{index} product_limit must be between "
+                f"{MIN_SHOPIFY_PRODUCT_LIMIT} and {SHOPIFY_PRODUCT_LIMIT}"
+            )
+        stores[hostname]["product_limit"] = product_limit
+
+    env_stores = os.environ.get("SHOPIFY_STORES", "")
+    for index, entry in enumerate(re.split(r"[,;\n]", env_stores), start=1):
+        entry = entry.strip()
+        if not entry:
+            continue
+        url = normalize_store_url(entry, f"SHOPIFY_STORES entry #{index}")
+        hostname = urlparse(url).hostname
+        stores.setdefault(
+            hostname,
+            {
+                "id": f"shopify-{hostname}",
+                "name": hostname,
+                "url": url,
+                "collection": None,
+                "platform": "shopify",
+                "catalog_url": None,
+                "product_category_ids": [],
+                "product_limit": SHOPIFY_PRODUCT_LIMIT,
+            },
+        )
+
+    for store in stores.values():
+        store["retail_prices"] = {}
+        store["retail_estimates"] = {}
+    seen_retail_prices = set()
+    for index, reference in enumerate(retail_prices, start=1):
+        if not isinstance(reference, dict):
+            raise ValueError(f"Retail price #{index} must be a JSON object")
+        store_host = reference.get("store")
+        handle = reference.get("handle")
+        price_value = reference.get("price")
+        if not isinstance(store_host, str) or store_host.lower() not in stores:
+            raise ValueError(
+                f"Retail price #{index} store must match a configured store hostname"
+            )
+        store_host = store_host.lower()
+        if not isinstance(handle, str) or not re.fullmatch(
+            r"[a-z0-9]+(?:-[a-z0-9]+)*", handle
+        ):
+            raise ValueError(f"Retail price #{index} has an invalid product handle")
+        try:
+            retail_price = Decimal(str(price_value))
+        except (InvalidOperation, ValueError):
+            raise ValueError(f"Retail price #{index} has an invalid price") from None
+        if not retail_price.is_finite() or retail_price <= 0:
+            raise ValueError(f"Retail price #{index} must be greater than zero")
+        key = (store_host, handle)
+        if key in seen_retail_prices:
+            raise ValueError(
+                f"Duplicate retail price for {store_host}/products/{handle}"
+            )
+        seen_retail_prices.add(key)
+        stores[store_host]["retail_prices"][handle] = retail_price
+
+    seen_estimate_categories = set()
+    for index, estimate in enumerate(retail_estimates, start=1):
+        if not isinstance(estimate, dict):
+            raise ValueError(f"Retail estimate #{index} must be a JSON object")
+        category = estimate.get("category")
+        label = estimate.get("label")
+        if (
+            not isinstance(category, str)
+            or not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", category)
+        ):
+            raise ValueError(f"Retail estimate #{index} has an invalid category")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"Retail estimate #{index} needs a non-empty label")
+        if category in seen_estimate_categories:
+            raise ValueError(f"Duplicate retail estimate for {category}")
+        try:
+            minimum = Decimal(str(estimate.get("minimum", "")))
+            maximum = Decimal(str(estimate.get("maximum", "")))
+        except (InvalidOperation, ValueError):
+            raise ValueError(
+                f"Retail estimate #{index} has an invalid price range"
+            ) from None
+        if (
+            not minimum.is_finite()
+            or not maximum.is_finite()
+            or minimum <= 0
+            or maximum < minimum
+        ):
+            raise ValueError(
+                f"Retail estimate #{index} must have positive prices and "
+                "maximum >= minimum"
+            )
+        seen_estimate_categories.add(category)
+        for store in stores.values():
+            store["retail_estimates"][category] = {
+                "label": label.strip(),
+                "minimum": minimum,
+                "maximum": maximum,
+            }
+
+    if not stores:
+        raise ValueError(
+            "No product catalogs configured. Add Shopify URLs to SHOPIFY_STORES "
+            "in .env or store entries to 'stores' in products.json"
+        )
+    return list(stores.values())
+
+
+def load_state(path):
+    if not path.exists():
+        return {"searches": {}}
+    with path.open(encoding="utf-8") as state_file:
+        state = json.load(state_file)
+    if not isinstance(state, dict) or not isinstance(state.get("searches", {}), dict):
+        raise ValueError(f"{path} contains invalid stock state data")
+    for store_state in state.get("searches", {}).values():
+        if (
+            not isinstance(store_state, dict)
+            or not isinstance(store_state.get("products", {}), dict)
+            or not all(
+                isinstance(url, str)
+                and isinstance(product, dict)
+                and isinstance(product.get("name"), str)
+                for url, product in store_state.get("products", {}).items()
+            )
+        ):
+            raise ValueError(f"{path} contains invalid store product data")
+    state.setdefault("searches", {})
+    return state
+
+
+def save_state(path, state):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    with temporary_path.open("w", encoding="utf-8") as state_file:
+        json.dump(state, state_file, ensure_ascii=False, indent=2)
+        state_file.write("\n")
+    temporary_path.replace(path)
+
+
+def load_stock_snapshot(path):
+    if not path.exists():
+        return {"updated_at": None, "stores": {}}
+    with path.open(encoding="utf-8") as stock_file:
+        stock = json.load(stock_file)
+    if (
+        not isinstance(stock, dict)
+        or not isinstance(stock.get("stores", {}), dict)
+    ):
+        raise ValueError(f"{path} contains invalid dashboard stock data")
+    return stock
+
+
+def save_stock_snapshot(path, stock):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    with temporary_path.open("w", encoding="utf-8") as stock_file:
+        json.dump(stock, stock_file, ensure_ascii=False, indent=2)
+        stock_file.write("\n")
+    temporary_path.replace(path)
+
+
+def fetch_json(url):
+    parsed = urlparse(url)
+    origin_url = f"{parsed.scheme}://{parsed.netloc}/"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": origin_url,
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    
+    request = Request(url, headers=headers)
+    try:
+        with urlopen(request, timeout=25) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise ValueError(f"JSON response exceeded {MAX_RESPONSE_BYTES} bytes")
+            return json.loads(body)
+    except HTTPError as error:
+        if error.code in (429, 503):
+            LOG.warning(
+                "Shopify endpoint returned HTTP %s; Retry-After=%s. "
+                "Stopping this check cycle.",
+                error.code,
+                error.headers.get("Retry-After", "not supplied"),
+            )
+        else:
+            LOG.error("HTTP %s while checking Shopify endpoint %s", error.code, url)
+        raise
+    except URLError:
+        LOG.warning("Network error while checking Shopify endpoint %s", url)
+        raise
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Shopify endpoint returned invalid JSON: {url}") from error
+
+
+def fetch_woocommerce_products(store):
+    endpoint = (
+        f"{store['url']}/wp-json/wc/store/v1/products"
+    )
+    products = []
+    page_size = min(store["product_limit"], 100)
+    page = 1
+    while len(products) < store["product_limit"]:
+        params = {
+            "per_page": min(page_size, store["product_limit"] - len(products)),
+            "page": page,
+        }
+        category_ids = store.get("product_category_ids", [])
+        if category_ids:
+            params["category"] = ",".join(str(value) for value in category_ids)
+        payload = fetch_json(f"{endpoint}?{urlencode(params)}")
+        if not isinstance(payload, list):
+            raise ValueError(
+                f"{store['name']} WooCommerce Store API response must be a list"
+            )
+        products.extend(payload)
+        if len(payload) < params["per_page"]:
+            break
+        page += 1
+    return parse_woocommerce_products(products[:store["product_limit"]], store)
+
+
+def parse_woocommerce_products(payload, store):
+    normalized_products = []
+    for product in payload:
+        if not isinstance(product, dict):
+            continue
+        prices = product.get("prices")
+        price_value = None
+        if (
+            isinstance(prices, dict)
+            and prices.get("currency_code") == "EUR"
+            and isinstance(prices.get("price"), str)
+        ):
+            try:
+                minor_unit = prices.get("currency_minor_unit", 2)
+                if (
+                    isinstance(minor_unit, int)
+                    and not isinstance(minor_unit, bool)
+                    and 0 <= minor_unit <= 6
+                ):
+                    price_value = str(
+                        Decimal(prices["price"])
+                        / (Decimal(10) ** minor_unit)
+                    )
+            except (InvalidOperation, ValueError):
+                price_value = None
+
+        categories = product.get("categories", [])
+        tags = product.get("tags", [])
+        category_names = [
+            item.get("name", "")
+            for item in categories
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ] if isinstance(categories, list) else []
+        tag_names = [
+            item.get("name", "")
+            for item in tags
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ] if isinstance(tags, list) else []
+        images = product.get("images", [])
+        if not isinstance(images, list):
+            images = []
+        normalized_products.append(
+            {
+                "title": unescape(str(product.get("name", ""))),
+                "handle": product.get("slug"),
+                "url": product.get("permalink"),
+                "product_type": " ".join(category_names),
+                "tags": tag_names,
+                "images": [
+                    {
+                        "src": image.get("src"),
+                        "alt": unescape(str(image.get("alt", ""))),
+                    }
+                    for image in images
+                    if isinstance(image, dict)
+                ],
+                "variants": [
+                    {
+                        "available": product.get("is_in_stock") is True,
+                        "price": price_value,
+                    }
+                ],
+            }
+        )
+    return parse_shopify_products({"products": normalized_products}, store)
+
+
+class PhilibertCatalogParser(HTMLParser):
+    VOID_TAGS = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.card = None
+        self.cards = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        self.stack.append(tag)
+        depth = len(self.stack)
+        classes = attributes.get("class", "").split()
+        if self.card is None and tag == "div" and "product-card--full" in classes:
+            self.card = {
+                "depth": depth,
+                "title_depth": None,
+                "price_depth": None,
+                "title": [],
+                "price": [],
+                "text": [],
+                "url": None,
+                "image": None,
+            }
+        if self.card is None:
+            return
+        if tag == "a" and "product-card__title" in classes:
+            self.card["title_depth"] = depth
+            self.card["url"] = attributes.get("href")
+        if "product-card__price" in classes:
+            self.card["price_depth"] = depth
+        if tag == "img" and self.card["image"] is None:
+            self.card["image"] = (
+                attributes.get("src")
+                or attributes.get("data-src")
+                or attributes.get("data-original")
+            )
+        if tag in self.VOID_TAGS:
+            self.stack.pop()
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self.VOID_TAGS:
+            self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if self.card is None:
+            return
+        text = " ".join(data.split())
+        if not text:
+            return
+        self.card["text"].append(text)
+        depth = len(self.stack)
+        if self.card["title_depth"] is not None and depth >= self.card["title_depth"]:
+            self.card["title"].append(text)
+        if self.card["price_depth"] is not None and depth >= self.card["price_depth"]:
+            self.card["price"].append(text)
+
+    def handle_endtag(self, tag):
+        matching_index = next(
+            (
+                index
+                for index in range(len(self.stack) - 1, -1, -1)
+                if self.stack[index] == tag
+            ),
+            None,
+        )
+        if matching_index is None:
+            return
+        closing_depth = matching_index + 1
+        if self.card is not None:
+            if self.card["title_depth"] == closing_depth:
+                self.card["title_depth"] = None
+            if self.card["price_depth"] == closing_depth:
+                self.card["price_depth"] = None
+            if self.card["depth"] == closing_depth:
+                self.cards.append(self.card)
+                self.card = None
+        self.stack = self.stack[:matching_index]
+
+
+def parse_philibert_products(document, store):
+    parser = PhilibertCatalogParser()
+    parser.feed(document)
+    normalized_products = []
+    for card in parser.cards[: store["product_limit"]]:
+        title = unescape(" ".join(card["title"])).strip()
+        product_url = urljoin(store["url"] + "/", card["url"] or "")
+        parsed_url = urlparse(product_url)
+        price_text = " ".join(card["price"])
+        match = re.search(
+            r"(?P<amount>(?:\d{1,3}(?:[ .]\d{3})+|\d+)[,.]\d{2})\s*(?:€|&euro;|eur)",
+            price_text,
+            re.IGNORECASE,
+        )
+        if not title or not match or parsed_url.hostname != urlparse(store["url"]).hostname:
+            continue
+        price = parse_euro_price(match.group("amount"))
+        if price is None:
+            continue
+        normalized_text = normalize(" ".join(card["text"]))
+        is_available = not any(
+            term in normalized_text
+            for term in ("product.oos", "rupture de stock", "epuise")
+        )
+        image = urljoin(store["url"], card["image"]) if card["image"] else None
+        normalized_products.append(
+            {
+                "title": title,
+                "handle": None,
+                "url": product_url,
+                "product_type": "",
+                "tags": [],
+                "images": [{"src": image, "alt": title}] if image else [],
+                "variants": [{"available": is_available, "price": str(price)}],
+            }
+        )
+    return parse_shopify_products({"products": normalized_products}, store)
+
+
+def fetch_philibert_catalog(store):
+    request = Request(
+        store["catalog_url"],
+        headers={
+            "User-Agent": "PokemonRestockMonitor/1.0 (+public catalog monitor)",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "fr-FR,fr;q=0.9",
+        },
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            charset = response.headers.get_content_charset() or "utf-8"
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise ValueError(
+                f"{store['name']} HTML response exceeded {MAX_RESPONSE_BYTES} bytes"
+            )
+        document = body.decode(charset, errors="replace")
+    except HTTPError:
+        raise
+    except URLError:
+        LOG.warning("%s: network error while reading public catalog", store["name"])
+        raise
+    return parse_philibert_products(document, store)
+
+
+def is_sealed_pokemon_product(product):
+    title = product.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return False
+    tags = product.get("tags", [])
+    if isinstance(tags, str):
+        tags = [tags]
+    if not isinstance(tags, list):
+        tags = []
+    product_type = product.get("product_type", "")
+    if not isinstance(product_type, str):
+        product_type = ""
+    normalized_type = normalize(product_type)
+    if normalized_type in ("carte pokemon", "pokemon card", "pokemon single"):
+        return False
+    text = normalize(" ".join([title, product_type, *[str(tag) for tag in tags]]))
+    return (
+        "pokemon" in text
+        and any(contains_product_term(text, term) for term in SEALED_PRODUCT_TERMS)
+        and not any(
+            contains_product_term(text, term) for term in EXCLUDED_PRODUCT_TERMS
+        )
+    )
+
+
+def parse_public_quantity(value):
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip()
+        if re.fullmatch(r"\d+", normalized_value):
+            return int(normalized_value)
+    return None
+
+
+def extract_public_quantity(product, available_variants):
+    quantity_keys = ("inventory_quantity", "available_quantity", "quantity")
+    variant_quantities = []
+    for variant in available_variants:
+        quantity = next(
+            (
+                parsed
+                for key in quantity_keys
+                if (parsed := parse_public_quantity(variant.get(key))) is not None
+            ),
+            None,
+        )
+        if quantity is None:
+            variant_quantities = []
+            break
+        variant_quantities.append(quantity)
+    if variant_quantities:
+        return sum(variant_quantities), "variantes du flux Shopify"
+
+    for key in quantity_keys:
+        quantity = parse_public_quantity(product.get(key))
+        if quantity is not None:
+            return quantity, "champ produit du flux Shopify"
+    return None, None
+
+
+class ProductDescriptionText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.ignored_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.ignored_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self.ignored_depth:
+            self.ignored_depth -= 1
+
+    def handle_data(self, data):
+        if not self.ignored_depth:
+            self.parts.append(data)
+
+
+EXPLICIT_RETAIL_PRICE_PATTERN = re.compile(
+    r"\b(?:prix\s+(?:(?:public|de\s+detail)\s+)?(?:conseille|recommande)"
+    r"|prix\s+retail(?:\s+officiel)?|pvc|msrp|rrp)\b"
+    r"[^0-9€]{0,40}"
+    r"(?:€\s*)?"
+    r"(?P<amount>(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:[,.]\d{1,2})?)"
+    r"\s*(?:€|eur)(?![a-z])",
+    re.IGNORECASE,
+)
+
+
+def parse_euro_price(value):
+    normalized = value.strip().replace(" ", "")
+    if "," in normalized and "." in normalized:
+        decimal_separator = "," if normalized.rfind(",") > normalized.rfind(".") else "."
+        thousands_separator = "." if decimal_separator == "," else ","
+        normalized = normalized.replace(thousands_separator, "")
+        normalized = normalized.replace(decimal_separator, ".")
+    elif "," in normalized:
+        normalized = normalized.replace(".", "").replace(",", ".")
+    elif normalized.count(".") > 1:
+        last_separator = normalized.rfind(".")
+        normalized = normalized[:last_separator].replace(".", "") + normalized[last_separator:]
+    try:
+        price = Decimal(normalized)
+    except (InvalidOperation, ValueError):
+        return None
+    return price if price.is_finite() and price > 0 else None
+
+
+def extract_explicit_retail_price(product):
+    for key in ("recommended_retail_price", "suggested_retail_price", "msrp"):
+        price = parse_euro_price(str(product.get(key, "")))
+        if price is not None:
+            return price, key
+
+    description = product.get("body_html")
+    if not isinstance(description, str) or not description.strip():
+        return None, None
+    parser = ProductDescriptionText()
+    parser.feed(description)
+    text = normalize(" ".join(parser.parts))
+    match = EXPLICIT_RETAIL_PRICE_PATTERN.search(text)
+    if not match:
+        return None, None
+    price = parse_euro_price(match.group("amount"))
+    if price is None:
+        return None, None
+    return price, "prix conseillé explicitement indiqué dans la description"
+
+
+_ebay_access_token = None
+_ebay_token_expires_at = 0
+
+
+def ebay_credentials():
+    client_id = os.environ.get("EBAY_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("EBAY_CLIENT_SECRET", "").strip()
+    if bool(client_id) != bool(client_secret):
+        raise ValueError(
+            "Set both EBAY_CLIENT_ID and EBAY_CLIENT_SECRET to enable eBay lookups"
+        )
+    return client_id, client_secret
+
+
+def ebay_api_json(url, *, headers, data=None):
+    request = Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    with urlopen(request, timeout=15) as response:
+        body = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise ValueError("eBay API response exceeded the configured size limit")
+    try:
+        result = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise ValueError("eBay API returned invalid JSON") from error
+    if not isinstance(result, dict):
+        raise ValueError("eBay API returned an invalid response")
+    return result
+
+
+def ebay_application_token(client_id, client_secret):
+    global _ebay_access_token, _ebay_token_expires_at
+    now = time.time()
+    if _ebay_access_token and now < _ebay_token_expires_at - 60:
+        return _ebay_access_token
+    credentials = base64.b64encode(
+        f"{client_id}:{client_secret}".encode("utf-8")
+    ).decode("ascii")
+    token_payload = urlencode(
+        {
+            "grant_type": "client_credentials",
+            "scope": "https://api.ebay.com/oauth/api_scope",
+        }
+    ).encode("ascii")
+    result = ebay_api_json(
+        "https://api.ebay.com/identity/v1/oauth2/token",
+        data=token_payload,
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+    )
+    token = result.get("access_token")
+    expires_in = result.get("expires_in")
+    if (
+        not isinstance(token, str)
+        or not token
+        or not isinstance(expires_in, int)
+        or expires_in <= 0
+    ):
+        raise ValueError("eBay OAuth response did not contain a valid access token")
+    _ebay_access_token = token
+    _ebay_token_expires_at = now + expires_in
+    return token
+
+
+EBAY_GENERIC_TITLE_TOKENS = {
+    "pokemon",
+    "tcg",
+    "trading",
+    "card",
+    "cards",
+    "sealed",
+    "new",
+    "booster",
+    "boosters",
+    "pack",
+    "packs",
+    "box",
+    "boxes",
+    "display",
+    "collection",
+    "coffret",
+    "edition",
+    "set",
+    "lot",
+    "of",
+    "the",
+    "and",
+    "for",
+    "fr",
+    "en",
+}
+EBAY_NON_SEALED_LISTING_TERMS = (
+    "single card",
+    "individual card",
+    "card only",
+    "empty box",
+    "proxy",
+)
+
+
+def ebay_title_match_score(product_title, listing_title):
+    product_tokens = set(re.findall(r"[a-z0-9]+", normalize(product_title)))
+    core_tokens = product_tokens - EBAY_GENERIC_TITLE_TOKENS
+    listing_tokens = set(re.findall(r"[a-z0-9]+", normalize(listing_title)))
+    if not core_tokens:
+        return 0
+    return len(core_tokens & listing_tokens) / len(core_tokens)
+
+
+def search_ebay_market_average(product_title, client_id, client_secret):
+    token = ebay_application_token(client_id, client_secret)
+    endpoint = "https://api.ebay.com/buy/browse/v1/item_summary/search?"
+    query = urlencode(
+        {
+            "q": product_title,
+            "limit": 50,
+            "filter": "buyingOptions:{FIXED_PRICE}",
+        }
+    )
+    result = ebay_api_json(
+        endpoint + query,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_FR",
+        },
+    )
+    summaries = result.get("itemSummaries", [])
+    if not isinstance(summaries, list):
+        return None
+
+    prices = []
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        listing_title = summary.get("title")
+        price_data = summary.get("price")
+        if not isinstance(listing_title, str) or not isinstance(price_data, dict):
+            continue
+        normalized_listing_title = normalize(listing_title)
+        if any(
+            contains_product_term(normalized_listing_title, term)
+            for term in EBAY_NON_SEALED_LISTING_TERMS
+        ):
+            continue
+        if ebay_title_match_score(product_title, listing_title) < 0.60:
+            continue
+        if price_data.get("currency") != "EUR":
+            continue
+        try:
+            price = Decimal(str(price_data.get("value", "")))
+        except (InvalidOperation, ValueError):
+            continue
+        if price.is_finite() and price > 0:
+            prices.append(price)
+
+    if len(prices) < 3:
+        return None
+    average = (sum(prices) / len(prices)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    return {"price": str(average), "listing_count": len(prices)}
+
+
+def load_market_price_cache(path):
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as cache_file:
+        cache = json.load(cache_file)
+    if not isinstance(cache, dict):
+        raise ValueError(f"{path} contains invalid market-price cache data")
+    return cache
+
+
+def save_market_price_cache(path, cache):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    with temporary_path.open("w", encoding="utf-8") as cache_file:
+        json.dump(cache, cache_file, ensure_ascii=False, indent=2)
+        cache_file.write("\n")
+    temporary_path.replace(path)
+
+
+def cached_ebay_market_price(product_title, cache, *, now=None):
+    try:
+        client_id, client_secret = ebay_credentials()
+    except ValueError as error:
+        LOG.warning("%s; using the configured retail estimate.", error)
+        return None
+    if not client_id:
+        return None
+    now = now or datetime.now(timezone.utc)
+    cache_key = hashlib.sha256(
+        normalize(product_title).encode("utf-8")
+    ).hexdigest()
+    entry = cache.get(cache_key)
+    if isinstance(entry, dict):
+        try:
+            checked_at = datetime.fromisoformat(
+                entry.get("checked_at", "").replace("Z", "+00:00")
+            )
+            if checked_at.tzinfo is None:
+                checked_at = checked_at.replace(tzinfo=timezone.utc)
+            ttl = (
+                EBAY_PRICE_CACHE_TTL_SECONDS
+                if entry.get("price") is not None
+                else EBAY_EMPTY_CACHE_TTL_SECONDS
+            )
+            if (now - checked_at).total_seconds() < ttl:
+                return entry if entry.get("price") is not None else None
+        except (AttributeError, TypeError, ValueError):
+            pass
+
+    try:
+        market_result = search_ebay_market_average(
+            product_title, client_id, client_secret
+        )
+    except (HTTPError, URLError, TimeoutError, ValueError) as error:
+        LOG.warning(
+            "eBay market-price lookup failed for %r (%s)",
+            product_title,
+            type(error).__name__,
+        )
+        cache[cache_key] = {
+            "price": None,
+            "listing_count": 0,
+            "checked_at": now.isoformat(timespec="seconds"),
+        }
+        return None
+    entry = {
+        "price": market_result["price"] if market_result else None,
+        "listing_count": market_result["listing_count"] if market_result else 0,
+        "checked_at": now.isoformat(timespec="seconds"),
+    }
+    cache[cache_key] = entry
+    return entry if entry["price"] is not None else None
+
+
+def apply_ebay_market_reference(product, cache):
+    if product.get("retail_price") is not None or not product.get("name"):
+        return False
+    market_result = cached_ebay_market_price(product["name"], cache)
+    if market_result is None:
+        return False
+    market_price = Decimal(market_result["price"])
+    product["retail_price"] = str(market_price)
+    product["retail_reference"] = {
+        "type": "market_average",
+        "label": "Moyenne des annonces actives eBay France",
+        "source": "eBay Browse API",
+        "listing_count": market_result["listing_count"],
+        "checked_at": market_result["checked_at"],
+    }
+    price = product.get("price")
+    product["price_delta_eur"] = None
+    product["price_delta_percent"] = None
+    if price is not None:
+        price_delta = Decimal(price) - market_price
+        product["price_delta_eur"] = str(price_delta)
+        product["price_delta_percent"] = str(
+            price_delta * Decimal("100") / market_price
+        )
+    return True
+
+
+def parse_shopify_products(payload, store):
+    if not isinstance(payload, dict) or not isinstance(payload.get("products"), list):
+        raise ValueError(f"{store['name']} response has no Shopify products list")
+
+    products = {}
+    recognized_count = 0
+    store_host = urlparse(store["url"]).hostname
+    for product in payload["products"]:
+        if not isinstance(product, dict) or not is_sealed_pokemon_product(product):
+            continue
+        recognized_count += 1
+        variants = product.get("variants", [])
+        available_variants = (
+            [
+                variant
+                for variant in variants
+                if isinstance(variant, dict) and variant.get("available") is True
+            ]
+            if isinstance(variants, list)
+            else []
+        )
+        if not available_variants:
+            continue
+
+        handle = product.get("handle")
+        raw_url = product.get("url")
+        if isinstance(raw_url, str) and raw_url.strip():
+            product_url = urljoin(store["url"] + "/", raw_url)
+        elif isinstance(handle, str) and handle.strip():
+            product_url = urljoin(store["url"] + "/", f"products/{handle}")
+        else:
+            LOG.warning("%s: skipping product without a valid handle", store["name"])
+            continue
+        parsed_url = urlparse(product_url)
+        if parsed_url.scheme != "https" or parsed_url.hostname != store_host:
+            LOG.warning("%s: skipping product with off-store URL", store["name"])
+            continue
+
+        images = product.get("images", [])
+        image = None
+        if isinstance(images, list) and images and isinstance(images[0], dict):
+            image = images[0].get("src")
+        if not image and isinstance(product.get("image"), dict):
+            image = product["image"].get("src")
+        image_metadata = images if isinstance(images, list) else []
+        if isinstance(product.get("image"), dict):
+            image_metadata.append(product["image"])
+        image_keywords = [
+            str(value)
+            for entry in image_metadata
+            if isinstance(entry, dict)
+            for value in (entry.get("alt"), entry.get("src"))
+            if isinstance(value, str) and value.strip()
+        ]
+        tags = product.get("tags", [])
+        if isinstance(tags, list):
+            tags_text = " ".join(str(tag) for tag in tags)
+        else:
+            tags_text = str(tags)
+        if isinstance(image, str):
+            image_url = urlparse(image)
+            if image_url.scheme != "https" or not image_url.netloc:
+                image = None
+        series_keywords = " ".join(
+            [
+                product["title"],
+                str(product.get("product_type", "")),
+                str(product.get("vendor", "")),
+                str(product.get("handle", "")),
+                tags_text,
+                *image_keywords,
+            ]
+        )
+
+        prices = []
+        for variant in available_variants:
+            try:
+                price = Decimal(str(variant.get("price", "")))
+            except (InvalidOperation, ValueError):
+                continue
+            if price.is_finite() and price >= 0:
+                prices.append(price)
+        price = min(prices) if prices else None
+        quantity, quantity_source = extract_public_quantity(
+            product, available_variants
+        )
+        retail_price = (
+            store.get("retail_prices", {}).get(handle)
+            if isinstance(handle, str)
+            else None
+        )
+        retail_reference = None
+        retail_fallback = None
+        if retail_price is not None:
+            retail_reference = {"type": "official"}
+        else:
+            detected_retail, retail_source = extract_explicit_retail_price(product)
+            if detected_retail is not None:
+                retail_price = detected_retail
+                retail_reference = {
+                    "type": "official_metadata",
+                    "source": retail_source,
+                }
+            else:
+                category = classify_retail_estimate(
+                    product["title"], series_keywords
+                )
+                estimate = store.get("retail_estimates", {}).get(category)
+                if estimate is not None:
+                    retail_fallback = {
+                        "type": "estimate",
+                        "label": estimate["label"],
+                        "minimum": str(estimate["minimum"]),
+                        "maximum": str(estimate["maximum"]),
+                    }
+        price_delta_percent = None
+        price_delta_eur = None
+        if price is not None and retail_price is not None:
+            price_delta_eur = price - retail_price
+            price_delta_percent = (
+                price_delta_eur * Decimal("100") / retail_price
+            )
+
+        canonical_url = urlunparse(parsed_url._replace(fragment=""))
+        products[canonical_url] = {
+            "name": product["title"].strip(),
+            "series_keywords": series_keywords,
+            "url": canonical_url,
+            "image": image if isinstance(image, str) else None,
+            "price": str(price) if price is not None else None,
+            "price_is_from": len(set(prices)) > 1,
+            "retail_price": (
+                str(retail_price) if retail_price is not None else None
+            ),
+            "retail_reference": retail_reference,
+            "retail_fallback": retail_fallback,
+            "price_delta_percent": (
+                str(price_delta_percent)
+                if price_delta_percent is not None
+                else None
+            ),
+            "price_delta_eur": (
+                str(price_delta_eur) if price_delta_eur is not None else None
+            ),
+            "quantity": quantity,
+            "quantity_source": quantity_source,
+        }
+    return products, recognized_count
+
+
+def classify_retail_estimate(title, keywords=""):
+    normalized_product_title = normalize(title)
+    if contains_product_term(normalized_product_title, "display"):
+        return "display_36"
+    normalized_title = normalize(f"{title} {keywords}")
+    has_30_boosters = any(
+        contains_product_term(normalized_title, term)
+        for term in ("30 boosters", "30 booster", "30 packs", "30 pack")
+    )
+    is_japanese = any(
+        contains_product_term(normalized_title, term)
+        for term in ("japonais", "japanese", "japan", "jpn")
+    )
+    if is_japanese and has_30_boosters:
+        return "japanese_box_30"
+
+    has_15_boosters = any(
+        contains_product_term(normalized_title, term)
+        for term in ("15 boosters", "15 packs", "15 pack")
+    )
+    is_chinese = any(
+        contains_product_term(normalized_title, term)
+        for term in ("chinois", "chinese", "china", "cn")
+    )
+    if is_chinese and has_15_boosters and any(
+        contains_product_term(normalized_title, term)
+        for term in ("display", "boite", "box")
+    ):
+        return "chinese_display_15"
+
+    if any(
+        contains_product_term(normalized_title, term)
+        for term in ("etb", "elite trainer", "dresseur d'elite", "dresseur elite")
+    ):
+        return "etb"
+    if contains_product_term(normalized_title, "mini tin"):
+        return "mini_tin"
+    if any(
+        contains_product_term(normalized_title, term)
+        for term in ("tin cube", "pokebox", "poke box", "pokemon tin")
+    ):
+        return "tin_cube"
+    if any(
+        contains_product_term(normalized_title, term)
+        for term in (
+            "duopack",
+            "duo pack",
+            "double pack",
+            "tripack",
+            "tri-pack",
+            "triple pack",
+        )
+    ) or (
+        contains_product_term(normalized_title, "blister")
+        and any(
+            contains_product_term(normalized_title, term)
+            for term in ("2 boosters", "3 boosters")
+        )
+    ):
+        return "duopack_tripack"
+    if (
+        contains_product_term(normalized_title, "bundle")
+        and contains_product_term(normalized_title, "6 boosters")
+    ) or contains_product_term(normalized_title, "lot de 6 boosters"):
+        return "bundle_6"
+    if contains_product_term(normalized_title, "coffret"):
+        return "coffret"
+    return None
+
+
+def apply_retail_estimate_fallback(product):
+    estimate = product.pop("retail_fallback", None)
+    if product.get("retail_price") is not None or not isinstance(estimate, dict):
+        return False
+    minimum = Decimal(estimate["minimum"])
+    maximum = Decimal(estimate["maximum"])
+    retail_price = ((minimum + maximum) / Decimal("2")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    product["retail_price"] = str(retail_price)
+    product["retail_reference"] = estimate
+    price = product.get("price")
+    if price is not None:
+        price_delta = Decimal(price) - retail_price
+        product["price_delta_eur"] = str(price_delta)
+        product["price_delta_percent"] = str(
+            price_delta * Decimal("100") / retail_price
+        )
+    return True
+
+
+def check_store(store):
+    if store.get("platform") == "woocommerce":
+        return fetch_woocommerce_products(store)
+    if store.get("platform") == "philibert_html":
+        return fetch_philibert_catalog(store)
+    product_limit = store.get("product_limit", SHOPIFY_PRODUCT_LIMIT)
+    query = urlencode({"limit": product_limit})
+    collection = store.get("collection")
+    if collection:
+        endpoint = f"{store['url']}/collections/{collection}/products.json?{query}"
+    else:
+        endpoint = f"{store['url']}/products.json?{query}"
+    return parse_shopify_products(fetch_json(endpoint), store)
+
+
+def post_json(url, payload, *, telegram=False):
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json", 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=15) as response:
+        result = response.read(64_000)
+    if telegram and not json.loads(result).get("ok"):
+        raise RuntimeError("Telegram rejected the notification")
+
+
+def test_discord_webhook():
+    webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    parsed = urlparse(webhook)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "discord.com"
+        or not parsed.path.startswith("/api/webhooks/")
+    ):
+        raise ValueError(
+            "DISCORD_WEBHOOK_URL is missing or is not a Discord webhook URL"
+        )
+    request = Request(
+        webhook,
+        data=json.dumps(
+            {"content": "✅ Test du moniteur Pokémon TCG : webhook Discord opérationnel."}
+        ).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json", 
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            LOG.info("Discord test message accepted (HTTP %s)", response.status)
+    except HTTPError as error:
+        raise RuntimeError(
+            f"Discord rejected the test message (HTTP {error.code})"
+        ) from None
+    except URLError:
+        raise RuntimeError("Could not connect to Discord for the test message") from None
+
+
+def send_alert(product, store_name, *, test=False):
+    price = product.get("price")
+    if price is not None:
+        formatted_price = f"{Decimal(price):,.2f}".replace(",", " ").replace(".", ",")
+        price_label = f"À partir de {formatted_price} €" if product.get("price_is_from") else f"{formatted_price} €"
+    else:
+        price_label = "Non communiqué par la boutique"
+    quantity = product.get("quantity")
+    quantity_label = (
+        f"{quantity} (donnée du flux public)"
+        if isinstance(quantity, int) and not isinstance(quantity, bool)
+        else "Non communiquée par la boutique"
+    )
+    retail_price = product.get("retail_price")
+    retail_reference = product.get("retail_reference")
+    if retail_reference is None and retail_price is not None:
+        retail_reference = {"type": "official"}
+    retail_is_estimate = (
+        isinstance(retail_reference, dict)
+        and retail_reference.get("type") == "estimate"
+    )
+    if retail_price is not None:
+        retail_formatted = (
+            f"{Decimal(retail_price):,.2f}".replace(",", " ").replace(".", ",")
+        )
+        if retail_is_estimate:
+            minimum = f"{Decimal(retail_reference['minimum']):,.2f}".replace(
+                ",", " "
+            ).replace(".", ",")
+            maximum = f"{Decimal(retail_reference['maximum']):,.2f}".replace(
+                ",", " "
+            ).replace(".", ",")
+            estimated_range = (
+                f"{minimum} €"
+                if retail_reference["minimum"] == retail_reference["maximum"]
+                else f"{minimum}–{maximum} €"
+            )
+            retail_label = f"{estimated_range} (base de calcul : {retail_formatted} €)"
+        else:
+            retail_label = f"{retail_formatted} €"
+        delta = product.get("price_delta_percent")
+        if delta is not None:
+            delta_percent = Decimal(delta).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            if retail_is_estimate:
+                delta_reference = "estimation"
+            elif isinstance(retail_reference, dict) and retail_reference.get(
+                "type"
+            ) == "market_average":
+                delta_reference = "marché eBay"
+            else:
+                delta_reference = "retail"
+            delta_label = f"{delta_percent:+.2f}% vs {delta_reference}"
+        else:
+            delta_label = "Non calculable"
+    else:
+        retail_label = "Non vérifié"
+        delta_label = "Non calculé"
+    if retail_is_estimate:
+        retail_field_label = "Estimation retail"
+    elif isinstance(retail_reference, dict) and retail_reference.get(
+        "type"
+    ) == "market_average":
+        retail_field_label = "Moyenne marché eBay"
+    else:
+        retail_field_label = "Prix retail officiel"
+    if test:
+        message = (
+            f"Aperçu de test — {store_name}. "
+            "Les valeurs retail et l'écart sont fictifs."
+        )
+    else:
+        message = (
+            f"Nouveau produit Pokémon TCG scellé disponible ({store_name}) : "
+            f"{product['name']} — {product['url']}\n"
+            f"💶 **Prix :** {price_label}\n"
+            f"🏷️ **{retail_field_label} :** {retail_label}\n"
+            f"📊 **Écart :** {delta_label}\n"
+            f"📦 **Quantité :** {quantity_label}"
+        )
+    print(f"\n🔔 {message}", flush=True)
+    successful = True
+
+    discord_webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+    if discord_webhook:
+        try:
+            if test:
+                delta_eur_label = "Non calculé"
+                if product.get("price_delta_eur") is not None:
+                    delta_eur = f"{Decimal(product['price_delta_eur']):+,.2f}"
+                    delta_eur_label = (
+                        delta_eur.replace(",", " ").replace(".", ",") + " €"
+                    )
+                discord_description = (
+                    f"Aperçu de test pour **{store_name}** — valeurs indicatives.\n"
+                    f"💶 **Prix :** {price_label}\n"
+                    f"🏷️ **{retail_field_label} :** {retail_label}\n"
+                    f"📊 **Écart :** {delta_label} · {delta_eur_label}\n"
+                    f"[Voir la fiche produit ↗]({product['url']})"
+                )
+                discord_title = "🧪 **Aperçu du format Pokémon TCG**"
+            else:
+                discord_description = (
+                    f"✅ En stock chez **{store_name}**\n"
+                    f"💶 **Prix :** {price_label}\n"
+                    f"[Voir la fiche et acheter ↗]({product['url']})"
+                )
+                discord_title = "🟢 **Nouveau stock Pokémon TCG**"
+            embed = {
+                "title": product["name"][:256],
+                "url": product["url"],
+                "description": discord_description,
+                "color": 0x5865F2 if test else 0x2ECC71,
+            }
+            if product.get("image"):
+                embed["image"] = {"url": product["image"]}
+            payload = {
+                "content": discord_title,
+                "embeds": [embed],
+            }
+            post_json(discord_webhook, payload)
+        except HTTPError as error:
+            LOG.error("Discord notification failed (HTTP %s)", error.code)
+            successful = False
+        except (URLError, RuntimeError, ValueError):
+            LOG.error("Discord notification failed due to a network or response error")
+            successful = False
+
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if telegram_token and telegram_chat_id:
+        try:
+            if product.get("image"):
+                telegram_url = f"https://api.telegram.org/bot{telegram_token}/sendPhoto"
+                payload = {
+                    "chat_id": telegram_chat_id,
+                    "photo": product["image"],
+                    "caption": message[:1024],
+                }
+            else:
+                telegram_url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+                payload = {"chat_id": telegram_chat_id, "text": message}
+            post_json(telegram_url, payload, telegram=True)
+        except (HTTPError, URLError, RuntimeError, ValueError) as error:
+            LOG.error("Telegram notification failed: %s", error)
+            successful = False
+
+    return successful
+
+
+def retry_after_seconds(error, minimum):
+    value = error.headers.get("Retry-After")
+    if value:
+        try:
+            return max(minimum, int(value))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                return max(
+                    minimum,
+                    int((retry_at - datetime.now(timezone.utc)).total_seconds()),
+                )
+            except (TypeError, ValueError, OverflowError):
+                LOG.warning("Could not parse Retry-After value %r", value)
+    return minimum
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    load_local_environment(Path(__file__).with_name(".env"))
+    if args.test_discord:
+        test_discord_webhook()
+        return
+    if bool(os.environ.get("TELEGRAM_BOT_TOKEN")) != bool(
+        os.environ.get("TELEGRAM_CHAT_ID")
+    ):
+        raise ValueError(
+            "Set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable Telegram"
+        )
+
+    stores = load_stores(args.config)
+    state = load_state(args.state)
+    stock = load_stock_snapshot(args.stock)
+    market_price_cache = load_market_price_cache(args.market_cache)
+    if not os.environ.get("EBAY_CLIENT_ID") and not os.environ.get(
+        "EBAY_CLIENT_SECRET"
+    ):
+        LOG.info(
+            "eBay market-price search disabled; configure EBAY_CLIENT_ID and "
+            "EBAY_CLIENT_SECRET to enable cached French active-listing estimates."
+        )
+    LOG.info(
+        "Monitoring %s public product catalogs; checking every %s seconds.",
+        len(stores),
+        args.interval,
+    )
+    LOG.info(
+        "Only configured public HTTPS Shopify/WooCommerce feeds and explicitly "
+        "configured public catalog pages are checked."
+    )
+
+    while True:
+        cycle_started = time.monotonic()
+        stop_cycle = False
+        retry_wait = args.interval
+        for index, store in enumerate(stores):
+            if index:
+                time.sleep(random.uniform(8, 15))
+            try:
+                products, recognized_count = check_store(store)
+            except HTTPError as error:
+                if error.code in (429, 503):
+                    stop_cycle = True
+                    retry_wait = retry_after_seconds(error, args.interval)
+                    break
+                continue
+            except (URLError, TimeoutError, ValueError) as error:
+                LOG.warning(
+                    "%s: could not read public product catalog: %s",
+                    store["name"],
+                    error,
+                )
+                continue
+
+            if not recognized_count:
+                LOG.warning(
+                    "%s: no sealed Pokémon TCG products found in the first %s "
+                    "catalog products; keeping previous state.",
+                    store["name"],
+                    SHOPIFY_PRODUCT_LIMIT,
+                )
+                continue
+
+            market_price_updates = 0
+            retail_estimate_updates = 0
+            for product in products.values():
+                if apply_ebay_market_reference(product, market_price_cache):
+                    market_price_updates += 1
+                if apply_retail_estimate_fallback(product):
+                    retail_estimate_updates += 1
+            if market_price_updates:
+                LOG.info(
+                    "%s: added eBay active-listing estimates for %s products",
+                    store["name"],
+                    market_price_updates,
+                )
+            if retail_estimate_updates:
+                LOG.info(
+                    "%s: applied format-based retail estimates to %s products "
+                    "without a configured, explicit, or Web reference",
+                    store["name"],
+                    retail_estimate_updates,
+                )
+
+            stock["stores"][store["id"]] = {
+                "name": store["name"],
+                "checked_at": datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
+                "products": list(products.values()),
+            }
+
+            store_states = state["searches"]
+            previous = store_states.get(store["id"])
+            current_products = {
+                url: {"name": product["name"]} for url, product in products.items()
+            }
+            if previous is None:
+                LOG.info(
+                    "%s: baseline saved (%s available products); no initial alerts",
+                    store["name"],
+                    len(products),
+                )
+                store_states[store["id"]] = {"products": current_products}
+            else:
+                previous_products = previous["products"]
+                new_urls = current_products.keys() - previous_products.keys()
+                alerts_succeeded = True
+                for url in sorted(new_urls):
+                    if not send_alert(products[url], store["name"]):
+                        alerts_succeeded = False
+                LOG.info(
+                    "%s: %s available products; %s new",
+                    store["name"],
+                    len(products),
+                    len(new_urls),
+                )
+                if alerts_succeeded:
+                    store_states[store["id"]] = {"products": current_products}
+
+        save_state(args.state, state)
+        save_market_price_cache(args.market_cache, market_price_cache)
+        stock["updated_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        save_stock_snapshot(args.stock, stock)
+        elapsed = time.monotonic() - cycle_started
+        wait = max(retry_wait if stop_cycle else 0, args.interval - elapsed)
+        if stop_cycle:
+            LOG.warning(
+                "Pausing after rate limiting; next cycle in at least %.0f seconds.",
+                wait,
+            )
+        time.sleep(wait)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nStopped.", file=sys.stderr)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        LOG.error("%s", error)
+        sys.exit(1)

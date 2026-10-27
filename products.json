@@ -1,0 +1,97 @@
+{
+  "stores": [
+    {
+      "name": "Pika-Boutique",
+      "url": "https://pika-boutique.fr",
+      "product_limit": 100
+    },
+    {
+      "name": "LorenzZone",
+      "url": "https://lorenzone.fr",
+      "collection": "produits-officiels-pokemon"
+    },
+    {
+      "name": "Cards Hunter",
+      "url": "https://www.cardshunter.fr",
+      "platform": "woocommerce",
+      "product_limit": 100,
+      "product_category_ids": [
+        221
+      ]
+    },
+    {
+      "name": "Kairyu",
+      "url": "https://kairyu.fr",
+      "product_limit": 250
+    },
+    {
+      "name": "PokeStation",
+      "url": "https://pokestation.fr",
+      "product_limit": 100
+    },
+    {
+      "name": "Philibert",
+      "url": "https://www.philibertnet.com",
+      "platform": "philibert_html",
+      "catalog_url": "https://www.philibertnet.com/fr/212-pokemon",
+      "product_limit": 100
+    }
+  ],
+  "retail_prices": [],
+  "retail_estimates": [
+    {
+      "category": "display_36",
+      "label": "Display (référence estimative 36 boosters)",
+      "minimum": "180.00",
+      "maximum": "180.00"
+    },
+    {
+      "category": "etb",
+      "label": "ETB standard",
+      "minimum": "54.99",
+      "maximum": "59.99"
+    },
+    {
+      "category": "duopack_tripack",
+      "label": "Duopack / Tripack",
+      "minimum": "11.99",
+      "maximum": "13.50"
+    },
+    {
+      "category": "coffret",
+      "label": "Coffret Pokémon",
+      "minimum": "44.99",
+      "maximum": "54.99"
+    },
+    {
+      "category": "tin_cube",
+      "label": "Tin Cube / Pokébox",
+      "minimum": "24.99",
+      "maximum": "25.90"
+    },
+    {
+      "category": "mini_tin",
+      "label": "Mini Tin",
+      "minimum": "10.99",
+      "maximum": "11.99"
+    },
+    {
+      "category": "bundle_6",
+      "label": "Bundle 6 boosters",
+      "minimum": "29.99",
+      "maximum": "29.99"
+    },
+    {
+      "category": "japanese_box_30",
+      "label": "Boîte japonaise 30 boosters",
+      "minimum": "35.00",
+      "maximum": "35.00"
+    },
+    {
+      "category": "chinese_display_15",
+      "label": "Display chinois 15 boosters",
+      "minimum": "30.00",
+      "maximum": "30.00"
+    }
+  ]
+}

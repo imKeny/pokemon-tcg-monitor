@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="60">
+    <meta name="theme-color" content="#10131b">
+    <title>Suivi Pokémon TCG</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #eef1f8;
+        background: #10131b;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        --surface: #191e29;
+        --surface-raised: #202635;
+        --border: #2b3343;
+        --muted: #9ba6ba;
+        --accent: #9aaeff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        min-width: 320px;
+        margin: 0;
+        background:
+          radial-gradient(ellipse at 50% -18rem, #354b8b55, transparent 52rem),
+          #10131b;
+      }
+      .hero {
+        padding: 2.8rem clamp(1.1rem, 5vw, 5rem) 2.3rem;
+        border-bottom: 1px solid #ffffff0d;
+        background: linear-gradient(120deg, #1a2240cc, #151a28cc);
+      }
+      .hero-inner, main { width: min(1480px, 100%); margin: 0 auto; }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: .55rem;
+        margin-bottom: .9rem;
+        color: #b7c5ff;
+        font-size: .76rem;
+        font-weight: 750;
+        letter-spacing: .13em;
+        text-transform: uppercase;
+      }
+      .eyebrow::before {
+        width: .48rem;
+        height: .48rem;
+        border-radius: 50%;
+        background: #76e3ae;
+        box-shadow: 0 0 14px #76e3ae99;
+        content: "";
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.2rem);
+        font-weight: 760;
+        letter-spacing: -.045em;
+        line-height: 1.05;
+      }
+      .hero p {
+        margin: 1.15rem 0 0;
+        color: #b5bed0;
+        font-size: .98rem;
+      }
+      .last-update {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .35rem .55rem;
+        margin-left: .35rem;
+        color: #e2e7f2;
+        font-weight: 650;
+      }
+      .update-label { color: #aab5c9; font-weight: 450; }
+      .search-panel {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .8rem 1rem;
+        margin-top: 1.55rem;
+      }
+      .search-box {
+        display: flex;
+        flex: 1 1 320px;
+        align-items: center;
+        gap: .75rem;
+        max-width: 720px;
+        min-height: 52px;
+        padding: 0 .95rem;
+        border: 1px solid #8799d34d;
+        border-radius: 13px;
+        background: #0e1320aa;
+        box-shadow: inset 0 1px #ffffff08, 0 8px 24px #00000014;
+        transition: border-color .2s ease, box-shadow .2s ease;
+      }
+      .search-box:focus-within {
+        border-color: #9aaeff;
+        box-shadow: 0 0 0 3px #8da3ff25;
+      }
+      .search-icon { flex: 0 0 auto; color: #aab7dc; font-size: 1.2rem; }
+      .search-box input {
+        width: 100%;
+        border: 0;
+        outline: 0;
+        color: #f3f5fb;
+        background: transparent;
+        font: inherit;
+        font-size: .95rem;
+      }
+      .search-box input::placeholder { color: #8792a8; }
+      .search-hint { color: #aab5c9; font-size: .82rem; }
+      .search-count { color: #e3e8f4; font-weight: 700; }
+      main { padding: 2rem clamp(1rem, 4vw, 3rem) 4rem; }
+      .store { margin: 0 0 2.5rem; }
+      .store-heading {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: .7rem 1rem;
+        margin: 0 0 1rem;
+      }
+      .store-heading h2 {
+        margin: 0;
+        font-size: 1.35rem;
+        font-weight: 700;
+        letter-spacing: -.025em;
+      }
+      .store-meta { color: var(--muted); font-size: .86rem; }
+      .store-time { margin-left: .25rem; white-space: nowrap; }
+      .product-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
+        gap: 1.15rem;
+      }
+      .product-card {
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: linear-gradient(155deg, #1d2330, var(--surface) 55%);
+        box-shadow: 0 12px 30px #00000020;
+        transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+      }
+      .product-card:hover {
+        transform: translateY(-3px);
+        border-color: #6678b5;
+        box-shadow: 0 18px 38px #00000038;
+      }
+      .product-image {
+        position: relative;
+        display: grid;
+        height: 300px;
+        place-items: center;
+        overflow: hidden;
+        padding: 1rem;
+        background:
+          radial-gradient(ellipse at 50% 62%, #53658b32, transparent 65%),
+          #151a24;
+      }
+      .product-image img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        filter: drop-shadow(0 12px 20px #00000052);
+        transition: transform .25s ease;
+      }
+      .product-card:hover .product-image img { transform: scale(1.045); }
+      .image-placeholder {
+        color: #758099;
+        font-size: .9rem;
+        text-align: center;
+      }
+      .stock-pill {
+        position: absolute;
+        top: .9rem;
+        left: .9rem;
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+        padding: .38rem .65rem;
+        border: 1px solid #6be0ad35;
+        border-radius: 999px;
+        color: #a4f0c9;
+        background: #10251fe8;
+        font-size: .72rem;
+        font-weight: 750;
+        letter-spacing: .025em;
+        backdrop-filter: blur(8px);
+      }
+      .stock-pill::before {
+        width: .4rem;
+        height: .4rem;
+        border-radius: 50%;
+        background: #63d99e;
+        content: "";
+      }
+      .product-content { padding: 1.05rem 1.05rem 1.1rem; }
+      .product-title {
+        display: inline-block;
+        min-height: 2.9em;
+        color: #f3f5fb;
+        font-size: 1.02rem;
+        font-weight: 680;
+        line-height: 1.45;
+        text-decoration: none;
+        letter-spacing: -.012em;
+      }
+      .product-title:hover { color: var(--accent); }
+      .series-tag {
+        display: inline-flex;
+        max-width: 100%;
+        margin-top: .55rem;
+        padding: .3rem .55rem;
+        border: 1px solid #9aabed35;
+        border-radius: 999px;
+        color: #bdcaff;
+        background: #788bd018;
+        font-size: .7rem;
+        font-weight: 700;
+        line-height: 1.25;
+      }
+      .product-data {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: .65rem;
+        margin: 1rem 0 0;
+      }
+      .data-item {
+        min-width: 0;
+        padding: .75rem;
+        border: 1px solid #ffffff0a;
+        border-radius: 11px;
+        background: #ffffff04;
+      }
+      .data-label {
+        display: block;
+        margin-bottom: .38rem;
+        color: var(--muted);
+        font-size: .68rem;
+        font-weight: 700;
+        letter-spacing: .055em;
+        text-transform: uppercase;
+      }
+      .data-value {
+        display: block;
+        overflow-wrap: anywhere;
+        color: #eef1f8;
+        font-size: .91rem;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.4;
+      }
+      .data-value.subtle { color: #b4bdce; font-size: .8rem; font-weight: 550; }
+      .delta-positive { color: #ff9a9a; }
+      .delta-negative { color: #79dfaf; }
+      .delta-neutral { color: #c5ccda; }
+      .estimate-note {
+        display: block;
+        margin-top: .18rem;
+        color: #e6c27a;
+        font-size: .68rem;
+        font-weight: 650;
+      }
+      .product-link {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: .45rem;
+        margin-top: .9rem;
+        padding: .7rem .85rem;
+        border: 1px solid #8398e552;
+        border-radius: 10px;
+        color: #c3ceff;
+        background: #697fd014;
+        font-size: .84rem;
+        font-weight: 700;
+        text-decoration: none;
+        transition: background .2s ease, border-color .2s ease;
+      }
+      .product-link:hover { border-color: #9badf4; background: #697fd02b; }
+      .empty {
+        padding: clamp(2rem, 7vw, 4rem) 1.5rem;
+        border: 1px dashed #3b465b;
+        border-radius: 18px;
+        color: #b5bed0;
+        background: #191e29b3;
+        text-align: center;
+      }
+      .empty strong { display: block; margin-bottom: .55rem; color: #eff2f9; font-size: 1.1rem; }
+      .no-results { display: none; }
+      @media (max-width: 640px) {
+        .hero { padding-top: 2rem; padding-bottom: 1.8rem; }
+        main { padding-top: 1.4rem; }
+        .product-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: .9rem; }
+        .product-image { height: 270px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="eyebrow">Veille en direct</div>
+        <h1>Suivi Pokémon TCG</h1>
+        <p>
+          <span class="update-label">Dernier relevé</span>
+          <span class="last-update">
+            {% if updated_at %}
+              <time>{{ updated_at|local_datetime }}</time>
+            {% else %}
+              <span>En attente du premier relevé</span>
+            {% endif %}
+          </span>
+          <span aria-hidden="true"> · </span> actualisation toutes les 60 secondes
+        </p>
+        <div class="search-panel">
+          <label class="search-box">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="product-search" type="search" placeholder="Rechercher un produit, une série…" autocomplete="off" aria-label="Rechercher dans toutes les boutiques">
+          </label>
+          <span class="search-hint" id="search-count" aria-live="polite"></span>
+        </div>
+      </div>
+    </header>
+    <main>
+      {% set product_count = namespace(value=0) %}
+      {% for store in stores %}
+        {% set product_count.value = product_count.value + (store.get("products", [])|length) %}
+      {% endfor %}
+      {% if product_count.value == 0 %}
+        <div class="empty">
+          <strong>Aucun produit disponible pour le moment</strong>
+          Le tableau se remplira après un cycle de surveillance réussi.
+        </div>
+      {% else %}
+        {% for store in stores %}
+          {% set products = store.get("products", []) %}
+          {% if products %}
+            <section class="store" aria-labelledby="store-{{ loop.index }}" data-store-section>
+              <div class="store-heading">
+                <h2 id="store-{{ loop.index }}">{{ store.get("name", "Boutique") }}</h2>
+                <span class="store-meta">
+                  {{ products|length }} produit{% if products|length != 1 %}s{% endif %}
+                  <span class="store-time">· vérifié le {{ store.get("checked_at")|local_datetime }}</span>
+                </span>
+              </div>
+              <div class="product-grid">
+                {% for product in products %}
+                  {% set delta = product.get("price_delta_percent") %}
+                  {% set retail_reference = product.get("retail_reference") or {} %}
+                  {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
+                  <article class="product-card" data-product-card data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+                    <div class="product-image">
+                      {% if product.get("image") %}
+                        <img src="{{ product.get('image') }}" alt="{{ product.get('name', 'Produit Pokémon TCG') }}" loading="lazy">
+                      {% else %}
+                        <span class="image-placeholder">Image indisponible</span>
+                      {% endif %}
+                      <span class="stock-pill">En stock</span>
+                    </div>
+                    <div class="product-content">
+                      <a class="product-title" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
+                        {{ product.get("name", "Produit sans nom") }}
+                      </a>
+                      <div><span class="series-tag">{{ series }}</span></div>
+                      <div class="product-data">
+                        <div class="data-item">
+                          <span class="data-label">Prix boutique</span>
+                          <span class="data-value">
+                            {% if product.get("price_is_from") %}Dès {% endif %}{{ product.get("price")|price }}
+                          </span>
+                        </div>
+                        <div class="data-item">
+                          <span class="data-label">
+                            {% if retail_reference.get("type") == "estimate" %}Estimation retail{% elif retail_reference.get("type") == "market_average" %}Moyenne marché eBay{% elif retail_reference.get("type") == "official_metadata" %}Retail repéré sur la fiche{% elif product.get("retail_price") is not none %}Retail configuré{% else %}Prix retail{% endif %}
+                          </span>
+                          {% if retail_reference.get("type") == "estimate" %}
+                            <span class="data-value subtle">
+                              {{ retail_reference.get("minimum")|price }}
+                              {% if retail_reference.get("minimum") != retail_reference.get("maximum") %}
+                                – {{ retail_reference.get("maximum")|price }}
+                              {% endif %}
+                            </span>
+                          {% elif retail_reference.get("type") == "market_average" %}
+                            <span class="data-value">{{ product.get("retail_price")|price }}</span>
+                            <small class="estimate-note">
+                              {{ retail_reference.get("listing_count", 0) }} annonces actives · pas un MSRP
+                            </small>
+                          {% elif product.get("retail_price") is not none %}
+                            <span class="data-value">{{ product.get("retail_price")|price }}</span>
+                          {% else %}
+                            <span class="data-value subtle">Non vérifié</span>
+                          {% endif %}
+                        </div>
+                        <div class="data-item">
+                          <span class="data-label">Écart</span>
+                          <span class="data-value {% if delta is none %}delta-neutral{% elif delta|float > 0 %}delta-positive{% elif delta|float < 0 %}delta-negative{% else %}delta-neutral{% endif %}">
+                            {{ delta|percentage }}
+                          </span>
+                          {% if product.get("price_delta_eur") is not none %}
+                            <span class="data-value subtle {% if delta|float > 0 %}delta-positive{% elif delta|float < 0 %}delta-negative{% endif %}">
+                              {{ product.get("price_delta_eur")|signed_price }}
+                            </span>
+                          {% endif %}
+                          {% if delta is not none and retail_reference.get("type") in ("estimate", "market_average") %}
+                            <small class="estimate-note">
+                              {% if retail_reference.get("type") == "market_average" %}marché eBay{% else %}estimatif{% endif %}
+                            </small>
+                          {% endif %}
+                        </div>
+                        <div class="data-item">
+                          <span class="data-label">Quantité</span>
+                          <span class="data-value subtle">
+                            {% if product.get("quantity") is not none %}
+                              {{ product.get("quantity") }} <small>flux public</small>
+                            {% else %}
+                              Non communiquée
+                            {% endif %}
+                          </span>
+                        </div>
+                      </div>
+                      <a class="product-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
+                        Voir la fiche produit <span aria-hidden="true">↗</span>
+                      </a>
+                    </div>
+                  </article>
+                {% endfor %}
+              </div>
+            </section>
+          {% endif %}
+        {% endfor %}
+        <div class="empty no-results" id="no-results">
+          <strong>Aucun produit ne correspond à cette recherche</strong>
+          Essaie un nom de produit, une boutique ou une série.
+        </div>
+      {% endif %}
+    </main>
+    <script>
+      (() => {
+        const searchInput = document.getElementById("product-search");
+        const countLabel = document.getElementById("search-count");
+        const noResults = document.getElementById("no-results");
+        if (!searchInput || !countLabel || !noResults) return;
+
+        const cards = [...document.querySelectorAll("[data-product-card]")];
+        const sections = [...document.querySelectorAll("[data-store-section]")];
+        const normalize = (value) => value
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLocaleLowerCase("fr")
+          .trim();
+
+        const applyFilter = () => {
+          const query = normalize(searchInput.value);
+          const terms = query.split(/\s+/).filter(Boolean);
+          let visibleCount = 0;
+          for (const card of cards) {
+            const searchable = normalize(card.dataset.search || "");
+            const matches = terms.every((term) => searchable.includes(term));
+            card.hidden = !matches;
+            if (matches) visibleCount += 1;
+          }
+          for (const section of sections) {
+            section.hidden = !section.querySelector("[data-product-card]:not([hidden])");
+          }
+          noResults.style.display = visibleCount === 0 ? "block" : "none";
+          countLabel.textContent = query
+            ? `${visibleCount} produit${visibleCount === 1 ? "" : "s"} trouvé${visibleCount === 1 ? "" : "s"}`
+            : `${cards.length} produit${cards.length === 1 ? "" : "s"} dans toutes les boutiques`;
+          sessionStorage.setItem("pokemon-dashboard-search", searchInput.value);
+        };
+
+        searchInput.value = sessionStorage.getItem("pokemon-dashboard-search") || "";
+        searchInput.addEventListener("input", applyFilter);
+        applyFilter();
+      })();
+    </script>
+  </body>
+</html>

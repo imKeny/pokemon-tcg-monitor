@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+config.py
+__pycache__/
+*.py[cod]
+search_state.json
+stock_state.json
+market_price_cache.json

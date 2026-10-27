@@ -1,0 +1,44 @@
+services:
+  pokemon-restock:
+    image: pokemon-restock:local
+    container_name: pokemon-restock
+    working_dir: /app
+    command:
+      - python
+      - -u
+      - monitor.py
+      - --config
+      - /app/products.json
+      - --state
+      - /data/search_state.json
+      - --stock
+      - /data/stock.json
+      - --market-cache
+      - /data/market_price_cache.json
+      - --interval
+      - "60"
+    restart: unless-stopped
+    volumes:
+      - /home/lacanette/pokemon-restock:/app:ro
+      - pokemon-restock-state:/data
+  pokemon-restock-dashboard:
+    image: pokemon-restock:local
+    container_name: pokemon-restock-dashboard
+    working_dir: /app
+    command:
+      - python
+      - -u
+      - app.py
+    environment:
+      STOCK_FILE: /data/stock.json
+    ports:
+      - "5000:5000"
+    depends_on:
+      - pokemon-restock
+    restart: unless-stopped
+    volumes:
+      - /home/lacanette/pokemon-restock:/app:ro
+      - pokemon-restock-state:/data:ro
+
+volumes:
+  pokemon-restock-state:
