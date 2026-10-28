@@ -35,48 +35,49 @@
       }
       .hero-inner, main { width: min(1480px, 100%); margin: 0 auto; }
       .hero-inner { position: relative; }
-      .pika-track {
+      .hero-ball {
         position: absolute;
-        top: -.4rem;
-        right: 0;
-        width: 150px;
-        height: 110px;
+        top: 50%;
+        right: clamp(0rem, 2vw, 1.5rem);
+        width: clamp(84px, 11vw, 128px);
+        transform: translateY(-50%);
         pointer-events: none;
       }
-      .pika-track::before {
-        position: absolute;
-        inset: 38px 8px 6px;
-        border: 2px dashed #ffcb0555;
+      @media (max-width: 760px) { .hero-ball { display: none; } }
+      .pokeball {
+        position: relative;
+        display: block;
+        aspect-ratio: 1;
         border-radius: 50%;
+        filter: drop-shadow(0 10px 18px #00000066);
+      }
+      .pokeball svg { display: block; width: 100%; height: 100%; }
+      .pokeball-spin { display: block; width: 100%; height: 100%; animation: pokeball-spin 5s linear infinite; }
+      .pokeball::after {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 30% 24%, #ffffffcc 0, #ffffff55 14%, transparent 34%),
+          radial-gradient(circle at 70% 82%, #00000040, transparent 45%);
         content: "";
       }
-      .pika-orbit {
+      .pokeball::before {
         position: absolute;
-        left: 50%;
-        top: 50%;
-        width: 0;
-        height: 0;
-        animation: pika-x 3.5s ease-in-out infinite alternate;
+        inset: 0;
+        z-index: 1;
+        overflow: hidden;
+        border-radius: 50%;
+        background: linear-gradient(105deg, transparent 38%, #ffffff55 50%, transparent 62%);
+        background-size: 250% 100%;
+        content: "";
+        animation: pokeball-sheen 3.2s ease-in-out infinite;
       }
-      .pika-walker {
-        position: absolute;
-        left: 0;
-        top: -28px;
-        width: 56px;
-        height: 56px;
-        margin-left: -28px;
-        animation: pika-y 3.5s ease-in-out -1.75s infinite alternate;
+      @keyframes pokeball-spin { to { transform: rotate(360deg); } }
+      @keyframes pokeball-sheen {
+        0% { background-position: 130% 0; }
+        60%, 100% { background-position: -130% 0; }
       }
-      .pika-walker svg { display: block; width: 100%; height: 100%; overflow: visible; animation: pika-face 7s steps(1) infinite; }
-      .pika-bob { animation: pika-hop .35s ease-in-out infinite; }
-      .pika-leg-a { animation: pika-step .35s ease-in-out infinite; transform-origin: 50% 0; transform-box: fill-box; }
-      .pika-leg-b { animation: pika-step .35s ease-in-out infinite reverse; transform-origin: 50% 0; transform-box: fill-box; }
-      @keyframes pika-x { from { transform: translateX(-58px); } to { transform: translateX(58px); } }
-      @keyframes pika-y { from { transform: translateY(-22px); } to { transform: translateY(22px); } }
-      @keyframes pika-face { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1); } }
-      @keyframes pika-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-      @keyframes pika-step { 0%, 100% { transform: rotate(-22deg); } 50% { transform: rotate(22deg); } }
-      @media (max-width: 640px) { .pika-track { display: none; } }
       h1 {
         display: inline-flex;
         align-items: center;
@@ -97,16 +98,10 @@
           0 6px 20px #ffcb0538;
       }
       .title-pokeball {
-        display: inline-block;
         flex: 0 0 auto;
-        width: .85em;
-        height: .85em;
-        filter: drop-shadow(0 3px 6px #00000066);
-        animation: pokeball-bob 2.4s ease-in-out infinite;
-      }
-      @keyframes pokeball-bob {
-        0%, 100% { transform: translateY(0) rotate(-8deg); }
-        50% { transform: translateY(-4px) rotate(8deg); }
+        width: .8em;
+        margin-top: .04em;
+        -webkit-text-stroke: 0;
       }
       .hero p {
         margin: 1.15rem 0 0;
@@ -441,57 +436,42 @@
       }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
-        .title-pokeball { animation: none; }
-        .pika-orbit, .pika-walker, .pika-walker svg, .pika-bob, .pika-leg-a, .pika-leg-b { animation: none; }
+        .pokeball-spin, .pokeball::before { animation: none; }
       }
     </style>
   </head>
   <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <clipPath id="pb-clip"><circle cx="50" cy="50" r="46"/></clipPath>
+        <linearGradient id="pb-red" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ff5a64"/>
+          <stop offset="1" stop-color="#c9303c"/>
+        </linearGradient>
+        <linearGradient id="pb-white" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff"/>
+          <stop offset="1" stop-color="#cfd5e6"/>
+        </linearGradient>
+        <g id="pokeball-art">
+          <g clip-path="url(#pb-clip)">
+            <rect width="100" height="50" fill="url(#pb-red)"/>
+            <rect y="50" width="100" height="50" fill="url(#pb-white)"/>
+            <rect y="43.5" width="100" height="13" fill="#1d2a52"/>
+          </g>
+          <circle cx="50" cy="50" r="45" fill="none" stroke="#1d2a52" stroke-width="5"/>
+          <circle cx="50" cy="50" r="16" fill="#1d2a52"/>
+          <circle cx="50" cy="50" r="11" fill="url(#pb-white)"/>
+          <circle cx="50" cy="50" r="5.5" fill="#fff" stroke="#9aa6c4" stroke-width="1.5"/>
+        </g>
+      </defs>
+    </svg>
     <header class="hero">
       <div class="hero-inner">
-        <div class="pika-track" aria-hidden="true">
-          <div class="pika-orbit">
-            <div class="pika-walker">
-              <svg viewBox="0 0 64 64">
-                <g class="pika-bob">
-                  <path d="M12 40 L6 30 L14 31 L10 20 L20 26 L18 38 Z" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5" stroke-linejoin="round"/>
-                  <ellipse cx="30" cy="40" rx="14" ry="11" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5"/>
-                  <path d="M20 32 L26 33 M19 38 L26 38" stroke="#7a4b12" stroke-width="2" stroke-linecap="round"/>
-                  <path d="M38 20 L36 6 L44 14 Z" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5" stroke-linejoin="round"/>
-                  <path d="M36 6 L38.4 9.6 L35.4 10.4 Z" fill="#222"/>
-                  <path d="M48 20 L56 8 L54 22 Z" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5" stroke-linejoin="round"/>
-                  <path d="M56 8 L53.6 12 L55.4 13 Z" fill="#222"/>
-                  <circle cx="44" cy="28" r="13" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5"/>
-                  <circle cx="49" cy="26" r="2.2" fill="#222"/>
-                  <circle cx="49.7" cy="25.3" r=".7" fill="#fff"/>
-                  <circle cx="50" cy="33" r="3" fill="#e84852"/>
-                  <path d="M55 30 q1.4 .6 1 2" stroke="#222" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-                </g>
-                <rect class="pika-leg-a" x="26" y="48" width="5" height="10" rx="2.5" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.2"/>
-                <rect class="pika-leg-b" x="36" y="48" width="5" height="10" rx="2.5" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.2"/>
-              </svg>
-            </div>
-          </div>
+        <div class="hero-ball" aria-hidden="true">
+          <span class="pokeball"><span class="pokeball-spin"><svg viewBox="0 0 100 100"><use href="#pokeball-art"/></svg></span></span>
         </div>
         <h1 class="dashboard-title">
-          <svg class="title-pokeball" viewBox="0 0 100 100" role="img" aria-label="Poké Ball">
-            <defs>
-              <radialGradient id="pb-shine" cx=".32" cy=".28" r=".7">
-                <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
-                <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-              </radialGradient>
-              <clipPath id="pb-clip"><circle cx="50" cy="50" r="46"/></clipPath>
-            </defs>
-            <g clip-path="url(#pb-clip)">
-              <rect width="100" height="50" fill="#e84852"/>
-              <rect y="50" width="100" height="50" fill="#f8f9ff"/>
-              <rect y="44" width="100" height="12" fill="#1d2a52"/>
-              <circle cx="50" cy="50" r="46" fill="url(#pb-shine)"/>
-            </g>
-            <circle cx="50" cy="50" r="46" fill="none" stroke="#1d2a52" stroke-width="6"/>
-            <circle cx="50" cy="50" r="15" fill="#f8f9ff" stroke="#1d2a52" stroke-width="6"/>
-            <circle cx="50" cy="50" r="6" fill="#fff" stroke="#1d2a52" stroke-width="2"/>
-          </svg>
+          <span class="pokeball title-pokeball" role="img" aria-label="Poké Ball"><svg viewBox="0 0 100 100"><use href="#pokeball-art"/></svg></span>
           Suivi Pokémon TCG
         </h1>
         <p>
