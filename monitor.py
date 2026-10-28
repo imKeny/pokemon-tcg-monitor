@@ -97,6 +97,14 @@ PARKAGE_SEARCH_TERMS = (
     "tripack pokemon",
     "collection premium pokemon",
 )
+PARKAGE_LANGUAGES = {
+    "jp": "Japonais",
+    "kr": "Coréen",
+    "cn": "Chinois",
+    "tw": "Chinois",
+    "en": "Anglais",
+    "de": "Allemand",
+}
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -1177,7 +1185,9 @@ def fetch_parkage_catalog(store):
                 "handle": None,
                 "url": product_url,
                 "product_type": "Pokémon TCG",
-                "tags": [],
+                "tags": [PARKAGE_LANGUAGES[record["lang"]]]
+                if record.get("lang") in PARKAGE_LANGUAGES
+                else [],
                 "images": (
                     [{"src": PARKAGE_IMAGE_BASE + image.lstrip("/"), "alt": title}]
                     if isinstance(image, str) and image.strip()

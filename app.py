@@ -248,6 +248,58 @@ def merchant_mark(name):
     return initials[:2].upper() or "?"
 
 
+KIND_PATTERNS = (
+    ("Carte gradée", ("carte gradee", "cartes gradees", "graded", "psa", "cgc", "pca", "expertisee")),
+    ("Display", ("display", "boite de", "boite a boosters", "box de boosters")),
+    ("ETB", ("etb", "elite trainer", "dresseur d elite")),
+    ("Bundle", ("bundle",)),
+    ("Tin / Pokébox", ("pokebox", "mini tin", "tin")),
+    ("Blister", ("blister", "tripack", "duopack", "3 boosters", "2 boosters")),
+    ("Coffret", ("coffret", "collection", "gift box", "special")),
+    ("Booster", ("booster",)),
+)
+LANGUAGE_PATTERNS = (
+    ("Japonais", ("japonais", "japonaise", "japanese", "japan", "jp", "jpn")),
+    ("Coréen", ("coreen", "coreenne", "korean", "kr", "kor")),
+    ("Chinois", ("chinois", "chinoise", "chinese", "cn", "tw", "zh")),
+    ("Anglais", ("anglais", "anglaise", "english", "eng")),
+    ("Allemand", ("allemand", "german", "deutsch")),
+    ("Espagnol", ("espagnol", "spanish")),
+    ("Italien", ("italien", "italian")),
+)
+
+
+def _matches_any(text, terms):
+    return any(
+        re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text)
+        for term in terms
+    )
+
+
+def identify_product_kind(product_name, keywords=""):
+    text = normalize_text(f"{product_name} {keywords}")
+    title = normalize_text(product_name)
+    for label, terms in KIND_PATTERNS:
+        if _matches_any(title, terms):
+            return label
+    for label, terms in KIND_PATTERNS:
+        if _matches_any(text, terms):
+            return label
+    return "Autre"
+
+
+def identify_product_language(product_name, keywords=""):
+    title = normalize_text(product_name)
+    text = normalize_text(f"{product_name} {keywords}")
+    for source in (title, text):
+        for label, terms in LANGUAGE_PATTERNS:
+            if _matches_any(source, terms):
+                return label
+    return "Français"
+
+
+app.jinja_env.filters["product_kind"] = identify_product_kind
+app.jinja_env.filters["product_language"] = identify_product_language
 app.jinja_env.filters["local_datetime"] = format_local_datetime
 app.jinja_env.filters["series"] = identify_series
 

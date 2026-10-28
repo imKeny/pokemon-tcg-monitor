@@ -35,15 +35,6 @@
       }
       .hero-inner, main { width: min(1480px, 100%); margin: 0 auto; }
       .hero-inner { position: relative; }
-      .hero-ball {
-        position: absolute;
-        top: 50%;
-        right: clamp(0rem, 2vw, 1.5rem);
-        width: clamp(84px, 11vw, 128px);
-        transform: translateY(-50%);
-        pointer-events: none;
-      }
-      @media (max-width: 760px) { .hero-ball { display: none; } }
       .pokeball {
         position: relative;
         display: block;
@@ -52,7 +43,6 @@
         filter: drop-shadow(0 10px 18px #00000066);
       }
       .pokeball svg { display: block; width: 100%; height: 100%; }
-      .pokeball-spin { display: block; width: 100%; height: 100%; animation: pokeball-spin 5s linear infinite; }
       .pokeball::after {
         position: absolute;
         inset: 0;
@@ -73,7 +63,6 @@
         content: "";
         animation: pokeball-sheen 3.2s ease-in-out infinite;
       }
-      @keyframes pokeball-spin { to { transform: rotate(360deg); } }
       @keyframes pokeball-sheen {
         0% { background-position: 130% 0; }
         60%, 100% { background-position: -130% 0; }
@@ -155,6 +144,53 @@
       }
       .search-box input::placeholder { color: #8792a8; }
       .search-hint { color: #aab5c9; font-size: .82rem; }
+      .filter-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: .8rem 1rem;
+        margin-top: 1rem;
+      }
+      .filter-field { display: flex; min-width: 170px; flex-direction: column; gap: .35rem; }
+      .filter-field span {
+        color: #aab5c9;
+        font-size: .7rem;
+        font-weight: 750;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .filter-field select {
+        min-height: 42px;
+        padding: 0 2.2rem 0 .85rem;
+        border: 1px solid #8799d34d;
+        border-radius: 11px;
+        outline: 0;
+        color: #f3f5fb;
+        background:
+          #0e1320aa url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none' stroke='%23aab7dc' stroke-width='2'%3E%3Cpath d='M1 1l5 5 5-5'/%3E%3C/svg%3E")
+          no-repeat right .8rem center;
+        font: inherit;
+        font-size: .88rem;
+        cursor: pointer;
+        appearance: none;
+        transition: border-color .2s ease, box-shadow .2s ease;
+      }
+      .filter-field select:hover { border-color: #9aaeff; }
+      .filter-field select:focus-visible { border-color: #9aaeff; box-shadow: 0 0 0 3px #8da3ff25; }
+      .filter-field option { color: #f3f5fb; background: #191e29; }
+      .filter-reset {
+        min-height: 42px;
+        padding: 0 .9rem;
+        border: 1px solid transparent;
+        border-radius: 11px;
+        color: #aab7dc;
+        background: transparent;
+        font: inherit;
+        font-size: .85rem;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      .filter-reset:hover { color: #fff; border-color: #8799d34d; }
       .search-count { color: #e3e8f4; font-weight: 700; }
       .merchant-panel { margin-top: 1.35rem; }
       .merchant-label {
@@ -436,7 +472,7 @@
       }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
-        .pokeball-spin, .pokeball::before { animation: none; }
+        .pokeball::before { animation: none; }
       }
     </style>
   </head>
@@ -467,9 +503,6 @@
     </svg>
     <header class="hero">
       <div class="hero-inner">
-        <div class="hero-ball" aria-hidden="true">
-          <span class="pokeball"><span class="pokeball-spin"><svg viewBox="0 0 100 100"><use href="#pokeball-art"/></svg></span></span>
-        </div>
         <h1 class="dashboard-title">
           <span class="pokeball title-pokeball" role="img" aria-label="Poké Ball"><svg viewBox="0 0 100 100"><use href="#pokeball-art"/></svg></span>
           Suivi Pokémon TCG
@@ -491,6 +524,27 @@
             <input id="product-search" type="search" placeholder="Rechercher un produit, une série…" autocomplete="off" aria-label="Rechercher dans toutes les boutiques">
           </label>
           <span class="search-hint" id="search-count" aria-live="polite"></span>
+        </div>
+        <div class="filter-bar">
+          <label class="filter-field">
+            <span>Type de produit</span>
+            <select id="filter-kind"><option value="">Tous les types</option></select>
+          </label>
+          <label class="filter-field">
+            <span>Langue</span>
+            <select id="filter-lang"><option value="">Toutes les langues</option></select>
+          </label>
+          <label class="filter-field">
+            <span>Trier par</span>
+            <select id="sort-by">
+              <option value="default">Pertinence</option>
+              <option value="price-asc">Prix croissant</option>
+              <option value="price-desc">Prix décroissant</option>
+              <option value="stock-desc">Disponibilité (stock décroissant)</option>
+              <option value="recent">Nouveautés d'abord</option>
+            </select>
+          </label>
+          <button class="filter-reset" type="button" id="filter-reset">Réinitialiser</button>
         </div>
         {% if stores %}
           <nav class="merchant-panel" aria-label="Filtrer par boutique">
@@ -544,7 +598,7 @@
                   {% set delta = product.get("price_delta_percent") %}
                   {% set retail_reference = product.get("retail_reference") or {} %}
                   {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
-                  <article class="product-card" data-product-card data-store-index="{{ store_index }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+                  <article class="product-card" data-product-card data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-order="{{ loop.index0 }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
                     <div class="product-image">
                       {% if product.get("image") %}
                         <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
@@ -651,7 +705,42 @@
         const cards = [...document.querySelectorAll("[data-product-card]")];
         const sections = [...document.querySelectorAll("[data-store-section]")];
         const storeFilters = [...document.querySelectorAll("[data-store-filter]")];
+        const kindSelect = document.getElementById("filter-kind");
+        const langSelect = document.getElementById("filter-lang");
+        const sortSelect = document.getElementById("sort-by");
+        const resetButton = document.getElementById("filter-reset");
         let selectedStore = "all";
+        const fillOptions = (select, key) => {
+          const counts = new Map();
+          for (const card of cards) {
+            const value = card.dataset[key];
+            if (value) counts.set(value, (counts.get(value) || 0) + 1);
+          }
+          [...counts.keys()].sort((a, b) => a.localeCompare(b, "fr")).forEach((value) => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = `${value} (${counts.get(value)})`;
+            select.append(option);
+          });
+        };
+        fillOptions(kindSelect, "kind");
+        fillOptions(langSelect, "lang");
+        const num = (value, fallback) => (value === "" || value === undefined || Number.isNaN(Number(value)) ? fallback : Number(value));
+        const comparators = {
+          default: (a, b) => num(a.dataset.order, 0) - num(b.dataset.order, 0),
+          "price-asc": (a, b) => num(a.dataset.price, Infinity) - num(b.dataset.price, Infinity),
+          "price-desc": (a, b) => num(b.dataset.price, -Infinity) - num(a.dataset.price, -Infinity),
+          "stock-desc": (a, b) => num(b.dataset.stock, -1) - num(a.dataset.stock, -1),
+          recent: (a, b) => num(b.dataset.recent, 0) - num(a.dataset.recent, 0),
+        };
+        const sortCards = () => {
+          const compare = comparators[sortSelect.value] || comparators.default;
+          for (const section of sections) {
+            const grid = section.querySelector(".product-grid");
+            const sorted = [...grid.children].sort((a, b) => compare(a, b) || comparators.default(a, b));
+            grid.append(...sorted);
+          }
+        };
         const normalize = (value) => value
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "")
@@ -667,10 +756,13 @@
             const matchesSearch = terms.every((term) => searchable.includes(term));
             const matchesStore = selectedStore === "all"
               || card.dataset.storeIndex === selectedStore;
-            const matches = matchesSearch && matchesStore;
+            const matchesKind = !kindSelect.value || card.dataset.kind === kindSelect.value;
+            const matchesLang = !langSelect.value || card.dataset.lang === langSelect.value;
+            const matches = matchesSearch && matchesStore && matchesKind && matchesLang;
             card.hidden = !matches;
             if (matches) visibleCount += 1;
           }
+          sortCards();
           for (const section of sections) {
             const visibleInSection = [...section.querySelectorAll("[data-product-card]")]
               .some((card) => !card.hidden);
@@ -685,6 +777,16 @@
 
         searchInput.value = sessionStorage.getItem("pokemon-dashboard-search") || "";
         searchInput.addEventListener("input", applyFilter);
+        for (const select of [kindSelect, langSelect, sortSelect]) {
+          select.addEventListener("change", applyFilter);
+        }
+        resetButton.addEventListener("click", () => {
+          kindSelect.value = "";
+          langSelect.value = "";
+          sortSelect.value = "default";
+          searchInput.value = "";
+          applyFilter();
+        });
         for (const filter of storeFilters) {
           filter.addEventListener("click", () => {
             selectedStore = filter.dataset.storeFilter || "all";
