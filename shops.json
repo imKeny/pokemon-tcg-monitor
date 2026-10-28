@@ -27,6 +27,15 @@
       "feed_url": null,
       "feed_format": "auto",
       "platform": "parkage_api"
+    },
+    {
+      "name": "Exemple Shopify (à copier)",
+      "url": "https://exemple-boutique.fr",
+      "platform": "shopify",
+      "source_mode": "auto",
+      "collection": "pokemon",
+      "product_limit": 250,
+      "enabled": false
     }
   ]
 }

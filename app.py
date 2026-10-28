@@ -66,6 +66,7 @@ def load_shop_registry():
         for entry in entries:
             if (
                 not isinstance(entry, dict)
+                or entry.get("enabled", True) is False
                 or not isinstance(entry.get("name"), str)
                 or not isinstance(entry.get("url"), str)
             ):

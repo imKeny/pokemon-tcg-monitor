@@ -375,6 +375,15 @@
         box-shadow: 0 6px 18px #f39c1230;
       }
       .preorder-pill::before { background: #ffa21f; }
+      .deal-pill {
+        top: 5.5rem;
+        left: .9rem;
+        border-color: #ffd34d88;
+        color: #2b1a00;
+        background: linear-gradient(135deg, #ffd34d, #ff9d2e);
+        box-shadow: 0 6px 18px #ff9d2e40;
+      }
+      .deal-pill::before { background: #7a2e00; }
       .hot-pill {
         top: auto;
         bottom: .9rem;
@@ -568,6 +577,7 @@
               <option value="price-desc">Prix décroissant</option>
               <option value="stock-desc">Disponibilité (stock décroissant)</option>
               <option value="recent">Nouveautés d'abord</option>
+              <option value="delta-asc">Meilleur écart vs référence</option>
             </select>
           </label>
           <label class="filter-field">
@@ -577,6 +587,7 @@
               <option value="disponible">Disponible</option>
               <option value="precommande">Précommande</option>
               <option value="rupture">Rupture</option>
+              <option value="deal">🔥 Bons plans (sous le prix de référence)</option>
             </select>
           </label>
           <button class="filter-reset" type="button" id="filter-reset">Réinitialiser</button>
@@ -634,7 +645,7 @@
                   {% set retail_reference = product.get("retail_reference") or {} %}
                   {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
                   {% set status = product|product_status %}
-                  <article class="product-card" data-product-card data-status="{{ status }}" data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-order="{{ loop.index0 }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+                  <article class="product-card" data-product-card data-status="{{ status }}" data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-deal="{{ 1 if product.get('is_good_deal') else 0 }}" data-delta="{{ product.get('price_delta_percent') if product.get('price_delta_percent') is not none else '' }}" data-order="{{ loop.index0 }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
                     <div class="product-image">
                       {% if product.get("image") %}
                         <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
@@ -652,6 +663,9 @@
                       {% endif %}
                       {% if product.get("is_hot_series") %}
                         <span class="stock-pill hot-pill">🔥 Série recherchée</span>
+                      {% endif %}
+                      {% if product.get("is_good_deal") %}
+                        <span class="stock-pill deal-pill">🔥 Bon Plan{% if delta is not none and delta|float < 0 %} · {{ delta|percentage }}{% endif %}</span>
                       {% endif %}
                       {% if product.get("is_recent") %}
                         <span class="stock-pill recent-pill">Nouveau · 24 h</span>
@@ -778,6 +792,7 @@
           "price-desc": (a, b) => num(b.dataset.price, -Infinity) - num(a.dataset.price, -Infinity),
           "stock-desc": (a, b) => num(b.dataset.stock, -1) - num(a.dataset.stock, -1),
           recent: (a, b) => num(b.dataset.recent, 0) - num(a.dataset.recent, 0),
+          "delta-asc": (a, b) => num(a.dataset.delta, Infinity) - num(b.dataset.delta, Infinity),
         };
         const sortCards = () => {
           const compare = comparators[sortSelect.value] || comparators.default;
@@ -805,7 +820,8 @@
             const matchesKind = !kindSelect.value || card.dataset.kind === kindSelect.value;
             const matchesLang = !langSelect.value || card.dataset.lang === langSelect.value;
             const status = statusSelect.value;
-            const matchesStatus = !status || card.dataset.status === status;
+            const matchesStatus = !status
+              || (status === "deal" ? card.dataset.deal === "1" : card.dataset.status === status);
             const matches = matchesSearch && matchesStore && matchesKind && matchesLang && matchesStatus;
             card.hidden = !matches;
             if (matches) visibleCount += 1;

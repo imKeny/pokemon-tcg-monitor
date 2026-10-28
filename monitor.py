@@ -504,6 +504,8 @@ def load_affiliate_feed_stores(path):
     for index, shop in enumerate(config["shops"], start=1):
         if not isinstance(shop, dict):
             raise ValueError(f"Shop #{index} must be a JSON object")
+        if shop.get("enabled", True) is False:
+            continue
         name = shop.get("name")
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"Shop #{index} needs a non-empty name")
@@ -545,6 +547,16 @@ def load_affiliate_feed_stores(path):
                 "'woocommerce', 'philibert_html', 'ultrajeux_html', "
                 "or 'parkage_api'"
             )
+        collection = shop.get("collection")
+        if collection is not None and (
+            platform != "shopify"
+            or not isinstance(collection, str)
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", collection)
+        ):
+            raise ValueError(
+                f"Shop #{index} collection must be a Shopify collection handle "
+                "and requires platform 'shopify'"
+            )
         catalog_urls = shop.get("catalog_urls", [])
         if platform == "ultrajeux_html":
             catalog_urls = validate_catalog_urls(
@@ -574,6 +586,7 @@ def load_affiliate_feed_stores(path):
             "name": name.strip(),
             "url": url,
             "platform": platform,
+            "collection": collection,
             "catalog_urls": catalog_urls,
             "feed_url": feed_url,
             "feed_format": None if feed_format == "auto" else feed_format,
@@ -687,6 +700,31 @@ def fetch_json(url):
         raise
     except json.JSONDecodeError as error:
         raise ValueError(f"Shopify endpoint returned invalid JSON: {url}") from error
+
+
+def fetch_shopify_catalog(store):
+    limit = min(store.get("product_limit", SHOPIFY_PRODUCT_LIMIT), SHOPIFY_PRODUCT_LIMIT)
+    base = store["url"]
+    if store.get("collection"):
+        base += f"/collections/{store['collection']}"
+    all_products = []
+    for page in range(1, 5):
+        if page > 1:
+            time.sleep(random.uniform(1, 2))
+        payload = fetch_json(
+            f"{base}/products.json?{urlencode({'limit': limit, 'page': page})}"
+        )
+        page_products = payload.get("products") if isinstance(payload, dict) else None
+        if not isinstance(page_products, list):
+            raise ValueError(f"{store['name']} response has no Shopify products list")
+        all_products.extend(page_products)
+        if len(page_products) < limit:
+            break
+    products, recognized_count = parse_shopify_products(
+        {"products": all_products}, store
+    )
+    store["source_status"] = f"Catalogue Shopify public ({recognized_count} produits scellés)"
+    return products, recognized_count
 
 
 def fetch_woocommerce_products(store):
@@ -2375,6 +2413,17 @@ def apply_retail_estimate_fallback(product):
     return True
 
 
+def is_good_deal(product):
+    try:
+        price = Decimal(str(product.get("price")))
+        reference = product.get("retail_reference") or {}
+        if reference.get("type") == "estimate":
+            return price < Decimal(str(reference["minimum"]))
+        return Decimal(str(product.get("price_delta_percent"))) < 0
+    except (InvalidOperation, ValueError, KeyError, TypeError):
+        return False
+
+
 def fetch_affiliate_feed_products(store):
     request = Request(
         store["feed_url"],
@@ -2437,6 +2486,12 @@ def fetch_affiliate_feed_products(store):
 def check_store(store):
     if store.get("platform") == "parkage_api" and store.get("feed_url") is None:
         return fetch_parkage_catalog(store)
+    if (
+        store.get("platform") == "shopify"
+        and store.get("source_mode") == "auto"
+        and store.get("feed_url") is None
+    ):
+        return fetch_shopify_catalog(store)
     if (
         store.get("platform") == "ultrajeux_html"
         and store.get("feed_url") is None
@@ -2587,6 +2642,8 @@ def send_alert(product, store_name, *, test=False):
     else:
         label = "Nouvelle précommande Pokémon TCG" if product.get("is_preorder") else "Nouveau produit Pokémon TCG scellé disponible"
         hot = " 🔥 Série recherchée" if product.get("is_hot_series") else ""
+        if product.get("is_good_deal"):
+            hot += " 💸 Bon plan"
         message = (
             f"{'📅' if product.get('is_preorder') else ''}{label}{hot} ({store_name}) : "
             f"{product['name']} — {product['url']}\n"
@@ -2620,6 +2677,7 @@ def send_alert(product, store_name, *, test=False):
                 discord_description = (
                     f"{'📅 **Précommande** chez' if product.get('is_preorder') else '✅ En stock chez'} **{store_name}**\n"
                     f"{'🔥 **Série très recherchée**' + chr(10) if product.get('is_hot_series') else ''}"
+                    f"{'💸 **Bon plan** : sous le prix de référence' + chr(10) if product.get('is_good_deal') else ''}"
                     f"💶 **Prix :** {price_label}\n"
                     f"[Voir la fiche et acheter ↗]({product['url']})"
                 )
@@ -2804,6 +2862,7 @@ def main():
                     market_price_updates += 1
                 if apply_retail_estimate_fallback(product):
                     retail_estimate_updates += 1
+                product["is_good_deal"] = is_good_deal(product)
             if market_price_updates:
                 LOG.info(
                     "%s: added eBay active-listing estimates for %s products",
