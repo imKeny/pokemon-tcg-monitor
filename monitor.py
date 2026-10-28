@@ -104,6 +104,9 @@ PARKAGE_SEARCH_TERMS = (
     "collection premium pokemon",
 )
 OUT_OF_STOCK_RETENTION_DAYS = 7
+BULK_ALERT_THRESHOLD = 25
+RENOTIFY_COOLDOWN_MINUTES = 60
+NOTIFIED_RETENTION_HOURS = 48
 DISCORD_USERNAME = "Poké Hook Restock"
 DISCORD_AVATAR_URL = (
     "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
@@ -2985,6 +2988,15 @@ def retry_after_seconds(error, minimum):
     return minimum
 
 
+def _minutes_since(iso_value, now_iso):
+    try:
+        return (
+            datetime.fromisoformat(now_iso) - datetime.fromisoformat(iso_value)
+        ).total_seconds() / 60
+    except (TypeError, ValueError):
+        return None
+
+
 def main():
     args = parse_args()
     logging.basicConfig(
@@ -3134,34 +3146,66 @@ def main():
                     store["name"],
                     len(products),
                 )
-                store_states[store["id"]] = {"products": current_products}
+                store_states[store["id"]] = {
+                    "products": current_products,
+                    "notified": {},
+                }
+                save_state(args.state, state)
             else:
                 previous_products = previous["products"]
-                new_urls = current_products.keys() - previous_products.keys()
+                notified = {
+                    url: sent_at
+                    for url, sent_at in previous.get("notified", {}).items()
+                    if (_minutes_since(sent_at, checked_at) or 0)
+                    < NOTIFIED_RETENTION_HOURS * 60
+                }
+                new_urls = sorted(current_products.keys() - previous_products.keys())
+                # Un afflux anormal (catalogue élargi, boutique réinitialisée) n'est pas un restock.
+                bulk_import = len(new_urls) > BULK_ALERT_THRESHOLD
                 for url, product in products.items():
                     previous_product = previous_products.get(url, {})
                     recently_available_at = previous_product.get(
                         "recently_available_at"
                     )
-                    if url in new_urls:
+                    if url in new_urls and not bulk_import:
                         recently_available_at = checked_at
                     if isinstance(recently_available_at, str):
                         product["recently_available_at"] = recently_available_at
                         current_products[url][
                             "recently_available_at"
                         ] = recently_available_at
-                alerts_succeeded = True
-                for url in sorted(new_urls):
-                    if not send_alert(products[url], store["name"]):
-                        alerts_succeeded = False
+                if bulk_import:
+                    LOG.warning(
+                        "%s: %s new products at once (> %s); marked as seen without alerts",
+                        store["name"],
+                        len(new_urls),
+                        BULK_ALERT_THRESHOLD,
+                    )
+                    alert_urls = []
+                else:
+                    alert_urls = []
+                    for url in new_urls:
+                        elapsed = _minutes_since(notified.get(url), checked_at)
+                        if elapsed is None or elapsed >= RENOTIFY_COOLDOWN_MINUTES:
+                            alert_urls.append(url)
                 LOG.info(
-                    "%s: %s available products; %s new",
+                    "%s: %s available products; %s new; %s alerts",
                     store["name"],
                     len(products),
                     len(new_urls),
+                    len(alert_urls),
                 )
-                if alerts_succeeded:
-                    store_states[store["id"]] = {"products": current_products}
+                # L'état est écrit avant l'envoi : un échec ne doit jamais rejouer les alertes.
+                store_states[store["id"]] = {
+                    "products": current_products,
+                    "notified": notified,
+                }
+                save_state(args.state, state)
+                for url in alert_urls:
+                    if not send_alert(products[url], store["name"]):
+                        LOG.warning("%s: alert failed for %s; not retried", store["name"], url)
+                    notified[url] = checked_at
+                    save_state(args.state, state)
 
             retained = []
             for old_product in stock["stores"].get(store["id"], {}).get("products", []):
