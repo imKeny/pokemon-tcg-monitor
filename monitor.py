@@ -104,6 +104,10 @@ PARKAGE_SEARCH_TERMS = (
     "collection premium pokemon",
 )
 OUT_OF_STOCK_RETENTION_DAYS = 7
+DISCORD_USERNAME = "Poké Hook Restock"
+DISCORD_AVATAR_URL = (
+    "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
+)
 PARKAGE_LANGUAGES = {
     "jp": "Japonais",
     "kr": "Coréen",
@@ -2772,7 +2776,11 @@ def test_discord_webhook():
     request = Request(
         webhook,
         data=json.dumps(
-            {"content": "✅ Test du moniteur Pokémon TCG : webhook Discord opérationnel."}
+            {
+                "username": DISCORD_USERNAME,
+                "avatar_url": DISCORD_AVATAR_URL,
+                "content": "✅ Test du moniteur Pokémon TCG : webhook Discord opérationnel.",
+            }
         ).encode("utf-8"),
         headers={
             "Content-Type": "application/json", 
@@ -2923,6 +2931,8 @@ def send_alert(product, store_name, *, test=False):
             if product.get("image"):
                 embed["image"] = {"url": product["image"]}
             payload = {
+                "username": DISCORD_USERNAME,
+                "avatar_url": DISCORD_AVATAR_URL,
                 "content": discord_title,
                 "embeds": [embed],
             }
