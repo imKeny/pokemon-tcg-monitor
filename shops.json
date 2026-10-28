@@ -79,6 +79,30 @@
       ]
     },
     {
+      "name": "LemanTCG",
+      "url": "https://lemantcg.fr",
+      "platform": "shopify",
+      "source_mode": "auto"
+    },
+    {
+      "name": "Pokelite",
+      "url": "https://www.pokelite.fr",
+      "platform": "woocommerce",
+      "source_mode": "auto"
+    },
+    {
+      "name": "HitnDrop",
+      "url": "https://hitndrop.com",
+      "platform": "shopify",
+      "source_mode": "auto"
+    },
+    {
+      "name": "Pikastore",
+      "url": "https://www.pikastore.fr",
+      "platform": "prestashop_json",
+      "source_mode": "auto"
+    },
+    {
       "name": "Exemple Shopify (à copier)",
       "url": "https://exemple-boutique.fr",
       "platform": "shopify",

@@ -2731,6 +2731,12 @@ def check_store(store):
     ):
         return fetch_shopify_catalog(store)
     if (
+        store.get("platform") == "woocommerce"
+        and store.get("source_mode") == "auto"
+        and store.get("feed_url") is None
+    ):
+        return fetch_woocommerce_products(store)
+    if (
         store.get("platform") == "ultrajeux_html"
         and store.get("feed_url") is None
     ):
