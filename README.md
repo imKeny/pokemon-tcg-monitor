@@ -1,9 +1,9 @@
 # Moniteur de réassort Pokémon TCG
 
-Le moniteur consulte uniquement les API de catalogue JSON publiques et
-documentées des boutiques configurées : Shopify `/products.json`, WooCommerce
-Store API et la page catalogue HTML publique explicitement configurée pour
-Philibert. Il n'utilise ni Chromium, Selenium, ni Playwright et ne tente pas de
+Le moniteur consulte uniquement les catalogues publics des boutiques
+configurées : Shopify `/products.json`, WooCommerce Store API, les pages HTML
+publiques configurées de Philibert et Ultra-Jeux, ainsi que les données Product
+JSON-LD. Il n'utilise ni Chromium, Selenium, ni Playwright et ne tente pas de
 contourner les refus d'accès. Pour chaque produit Pokémon TCG scellé, il
 vérifie sa disponibilité dans le flux ou le balisage public ; les fiches
 disponibles nouvellement détectées déclenchent une alerte console et, si
@@ -68,6 +68,71 @@ filtrée par l'identifiant 221, avec un maximum de 100 produits par cycle :
 Le moniteur convertit les prix WooCommerce depuis les unités mineures
 (centimes) en euros et utilise `is_in_stock`, les catégories, les tags et les
 images fournis dans le catalogue.
+
+### Parser un flux affilié XML ou CSV
+
+La fonction `parse_affiliate_product_feed(source, feed_format=None)` de
+`monitor.py` permet de parser localement les exports produit XML ou CSV, par
+exemple un flux Awin fourni par un partenaire. Elle renvoie une liste de
+produits avec `name`, `price` (`Decimal`), `stock` (`True`, `False` ou `None`
+si le flux ne précise pas le stock) et `affiliate_url`. Les noms de colonnes
+usuels Awin, tels que `product_name`, `search_price`, `in_stock` et
+`merchant_deep_link`, sont reconnus. Le format est détecté automatiquement ;
+il peut aussi être indiqué avec `feed_format="xml"` ou `"csv"`.
+
+La fonction lit un fichier local ou un contenu fourni et n'effectue pas elle-
+même de requête réseau. Exemple avec le fixture synthétique
+`sample_feed.xml` :
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+from monitor import parse_affiliate_product_feed
+
+for product in parse_affiliate_product_feed(Path("sample_feed.xml")):
+    print(product)
+PY
+```
+
+Les boutiques génériques peuvent être ajoutées dans `shops.json` avec `name`
+et `url`. Par défaut, `source_mode: "auto"` tente dans l'ordre un catalogue
+Shopify public, l'API Store publique de WooCommerce, puis les données Product
+JSON-LD de la page d'accueil. Ces accès sont limités aux interfaces HTTPS
+publiques standards du domaine configuré ; aucune protection n'est contournée.
+Les produits scellés Pokémon disponibles sont normalisés vers le même modèle
+et réutilisent le cycle de détection et d'alertes. Le dashboard indique la
+source détectée ou qu'aucune source standard n'a été trouvée.
+
+Un flux XML/CSV Awin autorisé peut être déclaré avec `feed_url` et,
+facultativement, `feed_format` (`auto`, `xml` ou `csv`). Quand cette URL
+HTTPS est renseignée, le parseur partagé traite le flux à la place de la
+découverte automatique.
+
+Exemple :
+
+```json
+{
+  "name": "Boutique Exemple",
+  "url": "https://boutique.example",
+  "source_mode": "auto",
+  "feed_url": null,
+  "feed_format": "auto"
+}
+```
+
+BrazStore, Parkage et PokeBase utilisent ce mode générique. Il ne garantit pas
+que chaque boutique publie un catalogue compatible ; si les endpoints standards
+et les métadonnées publiques ne fournissent aucun produit, le dashboard affiche
+« Aucune source publique standard détectée ». Une URL Awin réellement attribuée
+reste nécessaire pour utiliser un flux affilié.
+
+Ultra-Jeux est configuré avec `platform: "ultrajeux_html"` et une liste
+`catalog_urls` limitée à ses catégories publiques de produits Pokémon scellés
+(displays, blisters, ETB, coffrets, Pokébox et mini-tins). Le parseur lit les
+titres, prix et libellés de disponibilité des fiches de ces pages, puis les
+transmet au même filtre Pokémon scellé et au même système d'alertes que les
+autres sources. Pour une boutique utilisant cette structure, `catalog_urls`
+doit contenir des URL HTTPS du même hôte que la boutique.
 
 Kairyu et PokeStation exposent également `/products.json` en Shopify. Kairyu
 est interrogé jusqu'à 250 fiches (une fiche scellée disponible était présente
@@ -282,3 +347,36 @@ vous pouvez préciser le chemin avec `STOCK_FILE`.
 
 Le code, `.env` et `products.json` sont montés en lecture seule. La variable
 `SHOPIFY_STORES` est lue depuis `.env` au démarrage du conteneur.
+
+## Accès distant persistant avec ngrok
+
+Le service `dashboard-tunnel` est préparé dans Docker Compose avec le profil
+`tunnel` et redémarre automatiquement après une panne du conteneur. Il n'est
+pas démarré par défaut. Le domaine affiché dans l'assistant ngrok
+(`tweed-popular-pledge.ngrok-free.dev`) est configuré par défaut. Ajoute le
+jeton privé fourni par ngrok dans le fichier `.env` local du Raspberry Pi,
+sans le partager ni le committer :
+
+```dotenv
+NGROK_AUTHTOKEN=jeton_fourni_par_ngrok
+```
+
+Si l'assistant ngrok affiche un autre domaine pour le compte, ajoute aussi
+`NGROK_DOMAIN=ton-domaine.ngrok-free.dev`. Démarre ensuite le tunnel depuis le
+dossier du projet :
+
+```sh
+docker compose --profile tunnel up -d dashboard-tunnel
+docker compose logs --tail=30 dashboard-tunnel
+```
+
+L'URL prévue avec le domaine de la capture est
+`https://tweed-popular-pledge.ngrok-free.dev`. Le tunnel ne pourra la servir
+qu'après configuration locale du jeton et validation de ce domaine par ngrok.
+
+Pour l'arrêter : `docker compose --profile tunnel stop dashboard-tunnel`.
+Cette exposition est publique et ne demande pas de connexion au dashboard ;
+toute personne qui connaît l'adresse peut consulter les produits et les liens
+marchands. L'option gratuite ne garantit pas une disponibilité continue : le
+redémarrage automatique aide à rétablir le tunnel, mais dépend de l'accès
+Internet, du compte et du service ngrok.

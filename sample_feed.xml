@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<products>
+  <product>
+    <product_name>Pokémon Coffret de test</product_name>
+    <search_price>49.90</search_price>
+    <in_stock>1</in_stock>
+    <merchant_deep_link>https://www.example.test/redirect?url=https%3A%2F%2Fshop.example.test%2Fcoffret&amp;clickref=demo</merchant_deep_link>
+  </product>
+  <product>
+    <product_name>Pokémon Display de test</product_name>
+    <search_price>179,95 EUR</search_price>
+    <in_stock>0</in_stock>
+    <merchant_deep_link>https://www.example.test/redirect?url=https%3A%2F%2Fshop.example.test%2Fdisplay&amp;clickref=demo</merchant_deep_link>
+  </product>
+</products>

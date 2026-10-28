@@ -34,31 +34,59 @@
         background: linear-gradient(120deg, #1a2240cc, #151a28cc);
       }
       .hero-inner, main { width: min(1480px, 100%); margin: 0 auto; }
-      .eyebrow {
+      h1 {
         display: inline-flex;
         align-items: center;
-        gap: .55rem;
-        margin-bottom: .9rem;
-        color: #b7c5ff;
-        font-size: .76rem;
-        font-weight: 750;
-        letter-spacing: .13em;
-        text-transform: uppercase;
-      }
-      .eyebrow::before {
-        width: .48rem;
-        height: .48rem;
-        border-radius: 50%;
-        background: #76e3ae;
-        box-shadow: 0 0 14px #76e3ae99;
-        content: "";
-      }
-      h1 {
+        gap: .5em;
         margin: 0;
         font-size: clamp(2rem, 4vw, 3.2rem);
         font-weight: 760;
         letter-spacing: -.045em;
         line-height: 1.05;
+      }
+      .dashboard-title {
+        color: #ffcb05;
+        -webkit-text-stroke: 1px #244a9b;
+        paint-order: stroke fill;
+        text-shadow:
+          2px 2px 0 #244a9b,
+          -1px -1px 0 #244a9b,
+          0 6px 20px #ffcb0538;
+      }
+      .title-pokeball {
+        position: relative;
+        display: inline-block;
+        flex: 0 0 auto;
+        width: .72em;
+        aspect-ratio: 1;
+        overflow: hidden;
+        border: 2px solid #203c78;
+        border-radius: 50%;
+        background: linear-gradient(to bottom, #f8f9ff 0 46%, #203c78 46% 54%, #f8f9ff 54%);
+        box-shadow: 0 3px 10px #00000055;
+        animation: pokeball-bob 2.4s ease-in-out infinite;
+      }
+      .title-pokeball::before {
+        position: absolute;
+        inset: 0 0 50%;
+        background: #e84852;
+        content: "";
+      }
+      .title-pokeball::after {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 30%;
+        aspect-ratio: 1;
+        border: 2px solid #203c78;
+        border-radius: 50%;
+        background: #fff;
+        content: "";
+        transform: translate(-50%, -50%);
+      }
+      @keyframes pokeball-bob {
+        0%, 100% { transform: translateY(0) rotate(-8deg); }
+        50% { transform: translateY(-4px) rotate(8deg); }
       }
       .hero p {
         margin: 1.15rem 0 0;
@@ -113,6 +141,81 @@
       .search-box input::placeholder { color: #8792a8; }
       .search-hint { color: #aab5c9; font-size: .82rem; }
       .search-count { color: #e3e8f4; font-weight: 700; }
+      .merchant-panel { margin-top: 1.35rem; }
+      .merchant-label {
+        display: block;
+        margin-bottom: .65rem;
+        color: #aab5c9;
+        font-size: .76rem;
+        font-weight: 750;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .merchant-feed-status {
+        color: #aab5c9;
+        font-size: .68rem;
+        font-weight: 500;
+      }
+      .merchant-filters { display: flex; flex-wrap: wrap; gap: .55rem; }
+      .merchant-filter {
+        display: inline-flex;
+        min-height: 42px;
+        align-items: center;
+        gap: .55rem;
+        padding: .4rem .7rem;
+        border: 1px solid #8799d34d;
+        border-radius: 999px;
+        color: #dce3f3;
+        background: #0e1320aa;
+        font: inherit;
+        font-size: .82rem;
+        font-weight: 650;
+        cursor: pointer;
+        transition: border-color .2s ease, background .2s ease;
+      }
+      .merchant-filter:hover,
+      .merchant-filter[aria-pressed="true"] {
+        border-color: #9aaeff;
+        background: #697fd02b;
+      }
+      .merchant-mark {
+        position: relative;
+        display: inline-grid;
+        width: 1.65rem;
+        height: 1.65rem;
+        place-items: center;
+        overflow: hidden;
+        border-radius: 50%;
+        color: #dce3ff;
+        background: #697fd04a;
+        font-size: .66rem;
+        font-weight: 800;
+      }
+      .merchant-icon {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        padding: .18rem;
+        background: #fff;
+        object-fit: contain;
+      }
+      .merchant-icon[hidden] { display: none; }
+      .merchant-badge {
+        display: inline-grid;
+        min-width: 1.25rem;
+        height: 1.25rem;
+        place-items: center;
+        padding: 0 .32rem;
+        border-radius: 999px;
+        color: #fff;
+        background: #e4435b;
+        box-shadow: 0 0 12px #e4435b66;
+        font-size: .68rem;
+        font-weight: 800;
+        line-height: 1;
+      }
+      .merchant-badge[hidden] { display: none; }
       main { padding: 2rem clamp(1rem, 4vw, 3rem) 4rem; }
       .store { margin: 0 0 2.5rem; }
       .store-heading {
@@ -151,23 +254,31 @@
       .product-image {
         position: relative;
         display: grid;
-        height: 300px;
+        height: clamp(240px, 30vw, 340px);
         place-items: center;
         overflow: hidden;
         padding: 1rem;
-        background:
-          radial-gradient(ellipse at 50% 62%, #53658b32, transparent 65%),
-          #151a24;
+        background: #151a24;
+      }
+      .product-image-link {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: pointer;
+      }
+      .product-image-link:focus-visible {
+        border-radius: 8px;
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
       }
       .product-image img {
         display: block;
         width: 100%;
         height: 100%;
         object-fit: contain;
+        object-position: center;
         filter: drop-shadow(0 12px 20px #00000052);
-        transition: transform .25s ease;
       }
-      .product-card:hover .product-image img { transform: scale(1.045); }
       .image-placeholder {
         color: #758099;
         font-size: .9rem;
@@ -189,6 +300,7 @@
         font-weight: 750;
         letter-spacing: .025em;
         backdrop-filter: blur(8px);
+        pointer-events: none;
       }
       .stock-pill::before {
         width: .4rem;
@@ -197,6 +309,14 @@
         background: #63d99e;
         content: "";
       }
+      .recent-pill {
+        top: 3.2rem;
+        left: .9rem;
+        border-color: #e4435b55;
+        color: #ffd2d8;
+        background: #36131be8;
+      }
+      .recent-pill::before { background: #ff526a; }
       .product-content { padding: 1.05rem 1.05rem 1.1rem; }
       .product-title {
         display: inline-block;
@@ -253,6 +373,13 @@
         font-variant-numeric: tabular-nums;
         line-height: 1.4;
       }
+      .store-price {
+        color: #fff;
+        font-size: clamp(1.3rem, 2vw, 1.55rem);
+        font-weight: 780;
+        letter-spacing: -.025em;
+        line-height: 1.2;
+      }
       .data-value.subtle { color: #b4bdce; font-size: .8rem; font-weight: 550; }
       .delta-positive { color: #ff9a9a; }
       .delta-negative { color: #79dfaf; }
@@ -299,14 +426,17 @@
       }
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+        .title-pokeball { animation: none; }
       }
     </style>
   </head>
   <body>
     <header class="hero">
       <div class="hero-inner">
-        <div class="eyebrow">Veille en direct</div>
-        <h1>Suivi Pokémon TCG</h1>
+        <h1 class="dashboard-title">
+          Suivi Pokémon TCG
+          <span class="title-pokeball" role="img" aria-label="Poké Ball"></span>
+        </h1>
         <p>
           <span class="update-label">Dernier relevé</span>
           <span class="last-update">
@@ -325,6 +455,37 @@
           </label>
           <span class="search-hint" id="search-count" aria-live="polite"></span>
         </div>
+        {% if stores %}
+          <nav class="merchant-panel" aria-label="Filtrer par boutique">
+            <span class="merchant-label">Boutiques suivies · nouveautés et restocks récents</span>
+            <div class="merchant-filters">
+              <button class="merchant-filter" type="button" data-store-filter="all" aria-pressed="true">
+                Toutes
+              </button>
+              {% for store in stores %}
+                <button class="merchant-filter" type="button" data-store-filter="{{ loop.index0 }}" aria-pressed="false" aria-label="{{ store.get('name', 'Boutique') }}{% if store.get('recent_count') %}, {{ store.get('recent_count') }} nouveauté ou restock récent{% endif %}">
+                  <span class="merchant-mark" aria-hidden="true">
+                    {{ store.get("merchant_mark", "?") }}
+                    {% if store.get("favicon_url") %}
+                      <img class="merchant-icon" data-merchant-icon src="{{ store.get('favicon_url') }}" alt="" loading="lazy">
+                    {% endif %}
+                  </span>
+                  <span>{{ store.get("name", "Boutique") }}</span>
+                  {% if store.get("source_mode") == "auto" %}
+                    <span class="merchant-feed-status">
+                      {{ store.get("source_status", "Découverte automatique active") }}
+                    </span>
+                  {% elif store.get("feed_configured") is defined %}
+                    <span class="merchant-feed-status">
+                      {% if store.get("feed_configured") %}Flux actif{% else %}Flux à renseigner{% endif %}
+                    </span>
+                  {% endif %}
+                  <span class="merchant-badge" data-recent-badge {% if not store.get("recent_count") %}hidden{% endif %}>{{ store.get("recent_count", 0) }}</span>
+                </button>
+              {% endfor %}
+            </div>
+          </nav>
+        {% endif %}
       </div>
     </header>
     <main>
@@ -340,8 +501,9 @@
       {% else %}
         {% for store in stores %}
           {% set products = store.get("products", []) %}
+          {% set store_index = loop.index0 %}
           {% if products %}
-            <section class="store" aria-labelledby="store-{{ loop.index }}" data-store-section>
+            <section class="store" aria-labelledby="store-{{ loop.index }}" data-store-section data-store-index="{{ store_index }}">
               <div class="store-heading">
                 <h2 id="store-{{ loop.index }}">{{ store.get("name", "Boutique") }}</h2>
                 <span class="store-meta">
@@ -354,14 +516,19 @@
                   {% set delta = product.get("price_delta_percent") %}
                   {% set retail_reference = product.get("retail_reference") or {} %}
                   {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
-                  <article class="product-card" data-product-card data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+                  <article class="product-card" data-product-card data-store-index="{{ store_index }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
                     <div class="product-image">
                       {% if product.get("image") %}
-                        <img src="{{ product.get('image') }}" alt="{{ product.get('name', 'Produit Pokémon TCG') }}" loading="lazy">
+                        <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
+                          <img src="{{ product.get('image') }}" alt="{{ product.get('name', 'Produit Pokémon TCG') }}" loading="lazy">
+                        </a>
                       {% else %}
                         <span class="image-placeholder">Image indisponible</span>
                       {% endif %}
                       <span class="stock-pill">En stock</span>
+                      {% if product.get("is_recent") %}
+                        <span class="stock-pill recent-pill">Nouveau · 24 h</span>
+                      {% endif %}
                     </div>
                     <div class="product-content">
                       <a class="product-title" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
@@ -371,7 +538,7 @@
                       <div class="product-data">
                         <div class="data-item">
                           <span class="data-label">Prix boutique</span>
-                          <span class="data-value">
+                          <span class="data-value store-price">
                             {% if product.get("price_is_from") %}Dès {% endif %}{{ product.get("price")|price }}
                           </span>
                         </div>
@@ -442,6 +609,12 @@
     </main>
     <script>
       (() => {
+        document.querySelectorAll("[data-merchant-icon]").forEach((icon) => {
+          icon.addEventListener("error", () => {
+            icon.hidden = true;
+          }, { once: true });
+        });
+
         const searchInput = document.getElementById("product-search");
         const countLabel = document.getElementById("search-count");
         const noResults = document.getElementById("no-results");
@@ -449,6 +622,8 @@
 
         const cards = [...document.querySelectorAll("[data-product-card]")];
         const sections = [...document.querySelectorAll("[data-store-section]")];
+        const storeFilters = [...document.querySelectorAll("[data-store-filter]")];
+        let selectedStore = "all";
         const normalize = (value) => value
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "")
@@ -461,22 +636,39 @@
           let visibleCount = 0;
           for (const card of cards) {
             const searchable = normalize(card.dataset.search || "");
-            const matches = terms.every((term) => searchable.includes(term));
+            const matchesSearch = terms.every((term) => searchable.includes(term));
+            const matchesStore = selectedStore === "all"
+              || card.dataset.storeIndex === selectedStore;
+            const matches = matchesSearch && matchesStore;
             card.hidden = !matches;
             if (matches) visibleCount += 1;
           }
           for (const section of sections) {
-            section.hidden = !section.querySelector("[data-product-card]:not([hidden])");
+            const visibleInSection = [...section.querySelectorAll("[data-product-card]")]
+              .some((card) => !card.hidden);
+            section.hidden = !visibleInSection;
           }
           noResults.style.display = visibleCount === 0 ? "block" : "none";
           countLabel.textContent = query
             ? `${visibleCount} produit${visibleCount === 1 ? "" : "s"} trouvé${visibleCount === 1 ? "" : "s"}`
-            : `${cards.length} produit${cards.length === 1 ? "" : "s"} dans toutes les boutiques`;
+            : `${visibleCount} produit${visibleCount === 1 ? "" : "s"} affiché${visibleCount === 1 ? "" : "s"}`;
           sessionStorage.setItem("pokemon-dashboard-search", searchInput.value);
         };
 
         searchInput.value = sessionStorage.getItem("pokemon-dashboard-search") || "";
         searchInput.addEventListener("input", applyFilter);
+        for (const filter of storeFilters) {
+          filter.addEventListener("click", () => {
+            selectedStore = filter.dataset.storeFilter || "all";
+            for (const button of storeFilters) {
+              button.setAttribute(
+                "aria-pressed",
+                String(button === filter),
+              );
+            }
+            applyFilter();
+          });
+        }
         applyFilter();
       })();
     </script>

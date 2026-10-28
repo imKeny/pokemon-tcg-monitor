@@ -9,6 +9,8 @@ services:
       - monitor.py
       - --config
       - /app/products.json
+      - --shops
+      - /app/shops.json
       - --state
       - /data/search_state.json
       - --stock
@@ -39,6 +41,20 @@ services:
     volumes:
       - /home/lacanette/pokemon-restock:/app:ro
       - pokemon-restock-state:/data:ro
+  dashboard-tunnel:
+    image: ngrok/ngrok:latest
+    profiles:
+      - tunnel
+    command:
+      - http
+      - pokemon-restock-dashboard:5000
+      - --url
+      - https://${NGROK_DOMAIN:-tweed-popular-pledge.ngrok-free.dev}
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    depends_on:
+      - pokemon-restock-dashboard
+    restart: unless-stopped
 
 volumes:
   pokemon-restock-state:

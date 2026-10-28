@@ -6,8 +6,9 @@ import os
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from flask import Flask, render_template
@@ -18,6 +19,18 @@ STOCK_FILE = Path(
     os.environ.get(
         "STOCK_FILE",
         str(Path(__file__).with_name("stock.json")),
+    )
+)
+CONFIG_FILE = Path(
+    os.environ.get(
+        "PRODUCTS_FILE",
+        str(Path(__file__).with_name("products.json")),
+    )
+)
+SHOPS_FILE = Path(
+    os.environ.get(
+        "SHOPS_FILE",
+        str(Path(__file__).with_name("shops.json")),
     )
 )
 
@@ -33,6 +46,63 @@ def load_stock():
     ):
         raise ValueError(f"{STOCK_FILE} contains invalid dashboard stock data")
     return stock
+
+
+def load_shop_registry():
+    registry = {}
+    for path, key in (
+        (CONFIG_FILE, "stores"),
+        (SHOPS_FILE, "shops"),
+    ):
+        if not path.exists():
+            continue
+        with path.open(encoding="utf-8") as config_file:
+            config = json.load(config_file)
+        if not isinstance(config, dict):
+            raise ValueError(f"{path} must contain a JSON object")
+        entries = config.get(key, config.get("shopify_stores", []))
+        if not isinstance(entries, list):
+            raise ValueError(f"{path} must contain a list of {key}")
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("name"), str)
+                or not isinstance(entry.get("url"), str)
+            ):
+                continue
+            name = entry["name"].strip()
+            shop_data = {
+                "name": name,
+                "url": entry["url"],
+            }
+            if key == "shops":
+                shop_data["feed_configured"] = bool(entry.get("feed_url"))
+                shop_data["source_mode"] = entry.get("source_mode", "auto")
+            registry[name.casefold()] = shop_data
+    return registry
+
+
+def merchant_favicon_url(store):
+    store_url = store.get("url")
+    if not isinstance(store_url, str):
+        return None
+    try:
+        parsed = urlsplit(store_url)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or port not in (None, 443)
+    ):
+        return None
+    return (
+        "https://www.google.com/s2/favicons?"
+        f"domain={parsed.hostname}&sz=64"
+    )
 
 
 def format_price(value):
@@ -169,6 +239,15 @@ def format_local_datetime(value):
         return "—"
 
 
+def merchant_mark(name):
+    initials = "".join(
+        word[0]
+        for word in re.findall(r"[A-Za-z0-9À-ÿ]+", name)
+        if word
+    )
+    return initials[:2].upper() or "?"
+
+
 app.jinja_env.filters["local_datetime"] = format_local_datetime
 app.jinja_env.filters["series"] = identify_series
 
@@ -176,10 +255,58 @@ app.jinja_env.filters["series"] = identify_series
 @app.get("/")
 def dashboard():
     stock = load_stock()
+    shop_registry = load_shop_registry()
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     stores = sorted(
         stock["stores"].values(),
         key=lambda store: store.get("name", "").casefold(),
     )
+    existing_names = set()
+    for store in stores:
+        normalized_name = store.get("name", "").casefold()
+        existing_names.add(normalized_name)
+        configured_shop = shop_registry.get(normalized_name, {})
+        store["url"] = store.get("url") or configured_shop.get("url")
+        if "feed_configured" in configured_shop:
+            store["feed_configured"] = configured_shop["feed_configured"]
+            store["source_mode"] = configured_shop["source_mode"]
+        store["favicon_url"] = merchant_favicon_url(store)
+        recent_count = 0
+        for product in store.get("products", []):
+            recent = False
+            value = product.get("recently_available_at")
+            if isinstance(value, str) and value.strip():
+                try:
+                    recently_available_at = datetime.fromisoformat(
+                        value.strip().replace("Z", "+00:00")
+                    )
+                    if recently_available_at.tzinfo is None:
+                        recently_available_at = recently_available_at.replace(
+                            tzinfo=timezone.utc
+                        )
+                    recent = recent_cutoff <= recently_available_at <= datetime.now(
+                        timezone.utc
+                    )
+                except (ValueError, OverflowError):
+                    recent = False
+            product["is_recent"] = recent
+            recent_count += recent
+        store["recent_count"] = recent_count
+        store["merchant_mark"] = merchant_mark(store.get("name", ""))
+    for normalized_name, configured_shop in shop_registry.items():
+        if normalized_name in existing_names:
+            continue
+        store = {
+            **configured_shop,
+            "checked_at": None,
+            "products": [],
+            "recent_count": 0,
+            "source_status": "Découverte automatique active",
+        }
+        store["favicon_url"] = merchant_favicon_url(store)
+        store["merchant_mark"] = merchant_mark(store["name"])
+        stores.append(store)
+    stores.sort(key=lambda store: store.get("name", "").casefold())
     return render_template(
         "dashboard.html",
         stores=stores,

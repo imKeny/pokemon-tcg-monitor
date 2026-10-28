@@ -1,0 +1,45 @@
+{
+  "shops": [
+    {
+      "name": "Ultra-Jeux",
+      "url": "https://ultrajeux.com",
+      "source_mode": "auto",
+      "platform": "ultrajeux_html",
+      "product_limit": 250,
+      "catalog_urls": [
+        "https://ultrajeux.com/cat-1-4-469-boite-de-boosters-francais.html",
+        "https://ultrajeux.com/cat-1-4-470-boite-de-boosters-anglais.html",
+        "https://ultrajeux.com/cat-1-4-497-booster-francais-sous-blisters.html",
+        "https://ultrajeux.com/cat-1-4-505-etb-coffret-dresseur-d-elite.html",
+        "https://ultrajeux.com/cat-1-4-522-coffret-collection-ultra-premium.html",
+        "https://ultrajeux.com/cat-1-4-523-bundle-de-6-boosters.html",
+        "https://ultrajeux.com/cat-1-4-81-pokebox.html",
+        "https://ultrajeux.com/cat-1-4-488-mini-tin.html",
+        "https://ultrajeux.com/cat-1-4-514-coffret-3-boosters.html"
+      ],
+      "feed_url": null,
+      "feed_format": "auto"
+    },
+    {
+      "name": "BrazStore",
+      "url": "https://brazstore.fr",
+      "source_mode": "auto",
+      "feed_url": null,
+      "feed_format": "auto"
+    },
+    {
+      "name": "Parkage",
+      "url": "https://parkage.com",
+      "source_mode": "auto",
+      "feed_url": null,
+      "feed_format": "auto"
+    },
+    {
+      "name": "PokeBase",
+      "url": "https://pokebase.fr",
+      "source_mode": "auto",
+      "feed_url": null,
+      "feed_format": "auto"
+    }
+  ]
+}

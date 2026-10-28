@@ -3,12 +3,14 @@
 
 import argparse
 import base64
+import csv
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.utils import parsedate_to_datetime
 import hashlib
 from html.parser import HTMLParser
 from html import unescape
+import io
 import json
 import logging
 import os
@@ -18,6 +20,7 @@ import re
 import sys
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
@@ -93,6 +96,7 @@ def contains_product_term(text, term):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("products.json"))
+    parser.add_argument("--shops", type=Path, default=Path("shops.json"))
     parser.add_argument("--state", type=Path, default=Path("search_state.json"))
     parser.add_argument("--stock", type=Path, default=Path("stock.json"))
     parser.add_argument(
@@ -171,6 +175,33 @@ def normalize_store_url(url, name):
     return urlunparse(("https", hostname, "", "", "", ""))
 
 
+def validate_catalog_urls(catalog_urls, hostname, store_name):
+    if not isinstance(catalog_urls, list) or not catalog_urls:
+        raise ValueError(f"{store_name} needs at least one catalog URL")
+    if len(catalog_urls) > 20:
+        raise ValueError(f"{store_name} can configure at most 20 catalog URLs")
+    validated_urls = []
+    for catalog_url in catalog_urls:
+        if not isinstance(catalog_url, str) or not catalog_url.strip():
+            raise ValueError(f"{store_name} catalog URLs must be non-empty strings")
+        parsed_url = urlparse(catalog_url.strip())
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.hostname != hostname
+            or parsed_url.port not in (None, 443)
+            or parsed_url.username
+            or parsed_url.password
+            or parsed_url.fragment
+            or not parsed_url.path.startswith("/")
+        ):
+            raise ValueError(
+                f"{store_name} catalog URLs must use HTTPS on the configured "
+                "store host"
+            )
+        validated_urls.append(catalog_url.strip())
+    return validated_urls
+
+
 def load_stores(path):
     with path.open(encoding="utf-8") as config_file:
         config = json.load(config_file)
@@ -194,14 +225,20 @@ def load_stores(path):
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"Store #{index} needs a non-empty name")
         platform = store.get("platform", "shopify")
-        if platform not in ("shopify", "woocommerce", "philibert_html"):
+        if platform not in (
+            "shopify",
+            "woocommerce",
+            "philibert_html",
+            "ultrajeux_html",
+        ):
             raise ValueError(
                 f"Store #{index} platform must be 'shopify', 'woocommerce', "
-                "or 'philibert_html'"
+                "'philibert_html', or 'ultrajeux_html'"
             )
         url = normalize_store_url(store.get("url"), f"Store #{index}")
         hostname = urlparse(url).hostname
         catalog_url = store.get("catalog_url")
+        catalog_urls = store.get("catalog_urls", [])
         if platform == "philibert_html":
             catalog_url = catalog_url or urljoin(url + "/", "fr/212-pokemon")
             parsed_catalog_url = urlparse(catalog_url)
@@ -216,6 +253,19 @@ def load_stores(path):
                     f"Store #{index} catalog_url must be an HTTPS URL "
                     "on the configured store host"
                 )
+        elif platform == "ultrajeux_html":
+            catalog_urls = validate_catalog_urls(
+                catalog_urls, hostname, f"Store #{index}"
+            )
+            if catalog_url is not None:
+                raise ValueError(
+                    f"Store #{index} must use catalog_urls for ultrajeux_html"
+                )
+        elif catalog_urls:
+            raise ValueError(
+                f"Store #{index} catalog_urls are only supported for "
+                "ultrajeux_html"
+            )
         elif catalog_url is not None:
             raise ValueError(
                 f"Store #{index} catalog_url is only supported for philibert_html"
@@ -262,6 +312,7 @@ def load_stores(path):
             "platform": platform,
             "collection": collection,
             "catalog_url": catalog_url,
+            "catalog_urls": catalog_urls,
             "product_category_ids": category_ids,
         }
         product_limit = store.get("product_limit", SHOPIFY_PRODUCT_LIMIT)
@@ -292,6 +343,7 @@ def load_stores(path):
                 "collection": None,
                 "platform": "shopify",
                 "catalog_url": None,
+                "catalog_urls": [],
                 "product_category_ids": [],
                 "product_limit": SHOPIFY_PRODUCT_LIMIT,
             },
@@ -378,6 +430,97 @@ def load_stores(path):
     return list(stores.values())
 
 
+def load_affiliate_feed_stores(path):
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    if not isinstance(config, dict) or not isinstance(config.get("shops"), list):
+        raise ValueError(f"{path} must contain a 'shops' list")
+
+    stores = {}
+    for index, shop in enumerate(config["shops"], start=1):
+        if not isinstance(shop, dict):
+            raise ValueError(f"Shop #{index} must be a JSON object")
+        name = shop.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Shop #{index} needs a non-empty name")
+        url = normalize_store_url(shop.get("url"), f"Shop #{index}")
+        hostname = urlparse(url).hostname
+        feed_url = shop.get("feed_url")
+        if feed_url is not None:
+            if not isinstance(feed_url, str) or not feed_url.strip():
+                raise ValueError(f"Shop #{index} feed_url must be a non-empty URL")
+            parsed_feed_url = urlparse(feed_url.strip())
+            if (
+                parsed_feed_url.scheme != "https"
+                or not parsed_feed_url.hostname
+                or parsed_feed_url.username
+                or parsed_feed_url.password
+                or parsed_feed_url.fragment
+                or parsed_feed_url.port not in (None, 443)
+            ):
+                raise ValueError(
+                    f"Shop #{index} feed_url must be a public HTTPS URL"
+                )
+            feed_url = feed_url.strip()
+        feed_format = shop.get("feed_format", "auto")
+        if feed_format not in ("auto", "xml", "csv"):
+            raise ValueError(
+                f"Shop #{index} feed_format must be 'auto', 'xml', or 'csv'"
+            )
+        platform = shop.get("platform", "auto")
+        if platform not in (
+            "auto",
+            "shopify",
+            "woocommerce",
+            "philibert_html",
+            "ultrajeux_html",
+        ):
+            raise ValueError(
+                f"Shop #{index} platform must be 'auto', 'shopify', "
+                "'woocommerce', 'philibert_html', or 'ultrajeux_html'"
+            )
+        catalog_urls = shop.get("catalog_urls", [])
+        if platform == "ultrajeux_html":
+            catalog_urls = validate_catalog_urls(
+                catalog_urls, hostname, f"Shop #{index}"
+            )
+        elif catalog_urls:
+            raise ValueError(
+                f"Shop #{index} catalog_urls are only supported for "
+                "ultrajeux_html"
+            )
+        product_limit = shop.get("product_limit", SHOPIFY_PRODUCT_LIMIT)
+        if (
+            not isinstance(product_limit, int)
+            or isinstance(product_limit, bool)
+            or not MIN_SHOPIFY_PRODUCT_LIMIT
+            <= product_limit
+            <= SHOPIFY_PRODUCT_LIMIT
+        ):
+            raise ValueError(
+                f"Shop #{index} product_limit must be between "
+                f"{MIN_SHOPIFY_PRODUCT_LIMIT} and {SHOPIFY_PRODUCT_LIMIT}"
+            )
+        if hostname in stores:
+            raise ValueError(f"Duplicate shop URL hostname: {hostname}")
+        stores[hostname] = {
+            "id": f"auto-{hostname}",
+            "name": name.strip(),
+            "url": url,
+            "platform": platform,
+            "catalog_urls": catalog_urls,
+            "feed_url": feed_url,
+            "feed_format": None if feed_format == "auto" else feed_format,
+            "source_mode": "auto",
+            "product_limit": product_limit,
+            "retail_prices": {},
+            "retail_estimates": {},
+        }
+    return list(stores.values())
+
+
 def load_state(path):
     if not path.exists():
         return {"searches": {}}
@@ -430,6 +573,17 @@ def save_stock_snapshot(path, stock):
         json.dump(stock, stock_file, ensure_ascii=False, indent=2)
         stock_file.write("\n")
     temporary_path.replace(path)
+
+
+def save_auto_discovery_status(stock, store, status):
+    previous_snapshot = stock["stores"].get(store["id"], {})
+    stock["stores"][store["id"]] = {
+        "name": store["name"],
+        "url": store["url"],
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source_status": status,
+        "products": previous_snapshot.get("products", []),
+    }
 
 
 def fetch_json(url):
@@ -727,6 +881,467 @@ def fetch_philibert_catalog(store):
     return parse_philibert_products(document, store)
 
 
+class UltraJeuxCatalogParser(HTMLParser):
+    VOID_TAGS = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.card = None
+        self.cards = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        self.stack.append(tag)
+        depth = len(self.stack)
+        classes = attributes.get("class", "").split()
+        if self.card is None and tag == "div" and "block_produit" in classes:
+            self.card = {
+                "depth": depth,
+                "label_depth": None,
+                "title_depth": None,
+                "price_depth": None,
+                "availability_depth": None,
+                "label": [],
+                "title": [],
+                "price": [],
+                "availability": [],
+                "text": [],
+                "url": None,
+                "link_title": "",
+                "images": [],
+            }
+        if self.card is not None:
+            if "main_bloc_article_titre" in classes:
+                self.card["label_depth"] = depth
+            if tag == "p" and "titre" in classes:
+                self.card["title_depth"] = depth
+            if tag == "p" and "prix" in classes:
+                self.card["price_depth"] = depth
+            if tag == "p" and "disponibilite" in classes:
+                self.card["availability_depth"] = depth
+            if tag == "a":
+                href = attributes.get("href", "")
+                if urlparse(href).path.rsplit("/", 1)[-1].startswith("produit-"):
+                    self.card["url"] = href
+                    self.card["link_title"] = attributes.get("title", "")
+            if tag == "img":
+                self.card["images"].append(attributes)
+        if tag in self.VOID_TAGS:
+            self.stack.pop()
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self.VOID_TAGS:
+            self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if self.card is None:
+            return
+        text = " ".join(data.split())
+        if not text:
+            return
+        self.card["text"].append(text)
+        depth = len(self.stack)
+        for field in ("label", "title", "price", "availability"):
+            field_depth = self.card[f"{field}_depth"]
+            if field_depth is not None and depth >= field_depth:
+                self.card[field].append(text)
+
+    def handle_endtag(self, tag):
+        matching_index = next(
+            (
+                index
+                for index in range(len(self.stack) - 1, -1, -1)
+                if self.stack[index] == tag
+            ),
+            None,
+        )
+        if matching_index is None:
+            return
+        closing_depth = matching_index + 1
+        if self.card is not None:
+            for field in ("label", "title", "price", "availability"):
+                depth_key = f"{field}_depth"
+                if self.card[depth_key] == closing_depth:
+                    self.card[depth_key] = None
+            if self.card["depth"] == closing_depth:
+                self.cards.append(self.card)
+                self.card = None
+        self.stack = self.stack[:matching_index]
+
+
+def _ultrajeux_product_image(image_candidates):
+    best_image = None
+    best_score = 0
+    for image in image_candidates:
+        src = (
+            image.get("src")
+            or image.get("data-src")
+            or image.get("data-original")
+        )
+        if not isinstance(src, str) or not src.strip():
+            continue
+        normalized_src = src.casefold()
+        if any(term in normalized_src for term in ("icon_", "/pays/", "logo", "flag")):
+            continue
+        classes = (image.get("class") or "").casefold()
+        score = 0
+        if any(term in classes for term in ("produit", "article", "scan")):
+            score += 4
+        if re.search(r"\.(?:jpe?g|webp)(?:[?#]|$)", normalized_src):
+            score += 3
+        if (image.get("alt") or "").strip():
+            score += 1
+        if score > best_score:
+            best_image = src
+            best_score = score
+    return best_image
+
+
+def _extract_ultrajeux_products(document, store):
+    parser = UltraJeuxCatalogParser()
+    parser.feed(document)
+    normalized_products = []
+    store_host = urlparse(store["url"]).hostname
+    for card in parser.cards[: store["product_limit"]]:
+        title = " ".join(card["title"]).strip() or str(
+            card["link_title"] or ""
+        ).strip()
+        product_url = urljoin(store["url"] + "/", card["url"] or "")
+        parsed_url = urlparse(product_url)
+        if (
+            not title
+            or not card["url"]
+            or parsed_url.scheme != "https"
+            or parsed_url.hostname != store_host
+        ):
+            continue
+        price_text = " ".join(card["price"])
+        match = re.search(
+            r"(?P<amount>(?:\d{1,3}(?:[ .]\d{3})+|\d+)[,.]\d{2})\s*(?:€|&euro;|eur)",
+            price_text,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        price = parse_euro_price(match.group("amount"))
+        if price is None:
+            continue
+        availability = normalize(" ".join(card["availability"]))
+        is_available = (
+            any(
+                term in availability
+                for term in ("disponible", "en stock", "ajouter au panier")
+            )
+            and not any(
+                term in availability
+                for term in (
+                    "indisponible",
+                    "rupture",
+                    "epuise",
+                    "en magasin",
+                )
+            )
+        )
+        image = _ultrajeux_product_image(card["images"])
+        if image:
+            image = urljoin(store["url"] + "/", image)
+        normalized_products.append(
+            {
+                "title": title,
+                "handle": None,
+                "url": product_url,
+                "product_type": " ".join(card["label"]).strip(),
+                "tags": [],
+                "images": [{"src": image, "alt": title}] if image else [],
+                "variants": [{"available": is_available, "price": str(price)}],
+            }
+        )
+    return normalized_products
+
+
+def parse_ultrajeux_products(document, store):
+    normalized_products = _extract_ultrajeux_products(document, store)
+    return parse_shopify_products({"products": normalized_products}, store)
+
+
+def fetch_ultrajeux_catalog(store):
+    normalized_products = {}
+    for index, catalog_url in enumerate(store["catalog_urls"]):
+        if index:
+            time.sleep(random.uniform(2, 4))
+        body, charset = _read_public_response(
+            catalog_url,
+            accept="text/html,application/xhtml+xml",
+            store=store,
+        )
+        for product in _extract_ultrajeux_products(
+            body.decode(charset, errors="replace"), store
+        ):
+            normalized_products[product["url"]] = product
+    products, recognized_count = parse_shopify_products(
+        {"products": list(normalized_products.values())},
+        store,
+    )
+    store["source_status"] = (
+        f"Catalogue HTML public Ultra-Jeux ({recognized_count} produits scellés)"
+    )
+    return products, recognized_count
+
+
+class ProductJsonLdParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.capture_script = False
+        self.script_parts = []
+        self.documents = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "script":
+            return
+        attributes = dict(attrs)
+        self.capture_script = (
+            attributes.get("type", "").split(";", 1)[0].strip().lower()
+            == "application/ld+json"
+        )
+        self.script_parts = []
+
+    def handle_data(self, data):
+        if self.capture_script:
+            self.script_parts.append(data)
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "script" and self.capture_script:
+            self.documents.append("".join(self.script_parts))
+            self.capture_script = False
+            self.script_parts = []
+
+
+def _jsonld_products(value):
+    if isinstance(value, list):
+        for item in value:
+            yield from _jsonld_products(item)
+        return
+    if not isinstance(value, dict):
+        return
+    product_type = value.get("@type", [])
+    if isinstance(product_type, str):
+        product_type = [product_type]
+    if isinstance(product_type, list) and any(
+        isinstance(item, str) and item.rsplit("/", 1)[-1] == "Product"
+        for item in product_type
+    ):
+        yield value
+    for key in ("@graph", "mainEntity", "itemListElement", "item"):
+        if key in value:
+            yield from _jsonld_products(value[key])
+
+
+def parse_product_jsonld(document, store):
+    parser = ProductJsonLdParser()
+    parser.feed(document)
+    normalized_products = []
+    for json_document in parser.documents:
+        try:
+            data = json.loads(json_document)
+        except json.JSONDecodeError:
+            LOG.debug("%s: ignoring malformed JSON-LD product metadata", store["name"])
+            continue
+        for product in _jsonld_products(data):
+            title = product.get("name")
+            product_url = product.get("url")
+            if isinstance(product_url, dict):
+                product_url = product_url.get("@id")
+            if not isinstance(title, str) or not isinstance(product_url, str):
+                continue
+            categories = product.get("category", "")
+            if isinstance(categories, list):
+                categories = " ".join(
+                    item for item in categories if isinstance(item, str)
+                )
+            elif not isinstance(categories, str):
+                categories = ""
+            images = product.get("image", [])
+            if isinstance(images, str):
+                images = [images]
+            elif isinstance(images, dict):
+                images = [images.get("url") or images.get("@id")]
+            if not isinstance(images, list):
+                images = []
+            raw_offers = product.get("offers", [])
+            if isinstance(raw_offers, dict):
+                raw_offers = raw_offers.get("offers", [raw_offers])
+            if not isinstance(raw_offers, list):
+                raw_offers = []
+            variants = []
+            for offer in raw_offers:
+                if not isinstance(offer, dict):
+                    continue
+                currency = offer.get("priceCurrency")
+                price = offer.get("price", offer.get("lowPrice"))
+                availability = str(offer.get("availability", "")).rsplit("/", 1)[-1]
+                variants.append({
+                    "available": (
+                        availability
+                        in ("InStock", "LimitedAvailability", "PreOrder")
+                    ),
+                    "price": price if currency in (None, "EUR") else None,
+                })
+            normalized_products.append({
+                "title": title,
+                "handle": None,
+                "url": product_url,
+                "product_type": categories,
+                "tags": [],
+                "images": [
+                    {"src": urljoin(store["url"] + "/", image), "alt": title}
+                    for image in images
+                    if isinstance(image, str) and image.strip()
+                ],
+                "variants": variants,
+            })
+    return parse_shopify_products(
+        {"products": normalized_products},
+        store,
+    )
+
+
+def _read_public_response(url, *, accept, store):
+    request = Request(
+        url,
+        headers={
+            "Accept": accept,
+            "Accept-Language": "fr-FR,fr;q=0.9",
+            "User-Agent": "PokemonRestockMonitor/1.0 (+public catalog monitor)",
+        },
+    )
+    with urlopen(request, timeout=20) as response:
+        body = response.read(MAX_RESPONSE_BYTES + 1)
+        final_url = response.geturl()
+        charset = response.headers.get_content_charset() or "utf-8"
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise ValueError(
+            f"{store['name']} public catalog response exceeded {MAX_RESPONSE_BYTES} bytes"
+        )
+    requested = urlparse(store["url"])
+    final = urlparse(final_url)
+    requested_host = (requested.hostname or "").lower().removeprefix("www.")
+    final_host = (final.hostname or "").lower().removeprefix("www.")
+    if (
+        final.scheme != "https"
+        or final_host != requested_host
+        or final.username
+        or final.password
+    ):
+        raise ValueError(
+            f"{store['name']} catalog redirected outside its configured HTTPS host"
+        )
+    return body, charset
+
+
+def _try_auto_json_catalog(store, endpoint, parser):
+    try:
+        body, _ = _read_public_response(
+            endpoint,
+            accept="application/json",
+            store=store,
+        )
+    except HTTPError as error:
+        if error.code in (404, 405, 410):
+            return None
+        raise
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    parsed_products = parser(payload, store)
+    if parsed_products[1] > 0:
+        return parsed_products
+    return None
+
+
+def _record_auto_access_refusal(store, error):
+    if error.code not in (401, 403):
+        raise error
+    store["source_status"] = (
+        f"Endpoint public indisponible (HTTP {error.code})"
+    )
+    LOG.warning(
+        "%s: public catalog endpoint refused access (HTTP %s); "
+        "automatic discovery will not try alternate routes.",
+        store["name"],
+        error.code,
+    )
+    return {}, 0
+
+
+def check_auto_store(store):
+    limit = min(store.get("product_limit", SHOPIFY_PRODUCT_LIMIT), 250)
+    shopify_endpoint = f"{store['url']}/products.json?{urlencode({'limit': limit})}"
+    try:
+        result = _try_auto_json_catalog(
+            store,
+            shopify_endpoint,
+            parse_shopify_products,
+        )
+    except HTTPError as error:
+        return _record_auto_access_refusal(store, error)
+    if result is not None:
+        store["source_status"] = "Catalogue Shopify public"
+        return result
+
+    woo_endpoint = (
+        f"{store['url']}/wp-json/wc/store/v1/products?"
+        f"{urlencode({'search': 'pokemon', 'per_page': min(limit, 100)})}"
+    )
+    try:
+        result = _try_auto_json_catalog(
+            store,
+            woo_endpoint,
+            lambda payload, current_store: (
+                parse_woocommerce_products(payload, current_store)
+                if isinstance(payload, list)
+                else ({}, 0)
+            ),
+        )
+    except HTTPError as error:
+        return _record_auto_access_refusal(store, error)
+    if result is not None:
+        store["source_status"] = "API Store WooCommerce publique"
+        return result
+
+    try:
+        body, charset = _read_public_response(
+            store["url"] + "/",
+            accept="text/html,application/xhtml+xml",
+            store=store,
+        )
+    except HTTPError as error:
+        return _record_auto_access_refusal(store, error)
+    result = parse_product_jsonld(body.decode(charset, errors="replace"), store)
+    if result[1] > 0:
+        store["source_status"] = "Produits JSON-LD publics"
+        return result
+    store["source_status"] = "Aucune source publique standard détectée"
+    return {}, 0
+
+
 def is_sealed_pokemon_product(product):
     title = product.get("title")
     if not isinstance(title, str) or not title.strip():
@@ -835,6 +1450,240 @@ def parse_euro_price(value):
     except (InvalidOperation, ValueError):
         return None
     return price if price.is_finite() and price > 0 else None
+
+
+AFFILIATE_FEED_FIELDS = {
+    "name": (
+        "name",
+        "title",
+        "product_name",
+        "product_title",
+        "productname",
+    ),
+    "price": (
+        "price",
+        "search_price",
+        "sale_price",
+        "current_price",
+        "product_price",
+    ),
+    "stock": (
+        "stock",
+        "availability",
+        "in_stock",
+        "is_in_stock",
+        "stock_status",
+        "quantity",
+    ),
+    "affiliate_url": (
+        "affiliate_url",
+        "aw_deep_link",
+        "deep_link",
+        "merchant_deep_link",
+        "product_url",
+        "url",
+        "link",
+    ),
+}
+
+
+def _feed_field_name(value):
+    return re.sub(r"[^a-z0-9]+", "_", normalize(value)).strip("_")
+
+
+def _feed_text(value):
+    if value is None:
+        return ""
+    return unescape(str(value)).strip()
+
+
+def _parse_feed_stock(value):
+    normalized = normalize(_feed_text(value))
+    if not normalized:
+        return None
+    available_values = {
+        "1",
+        "true",
+        "yes",
+        "available",
+        "in stock",
+        "instock",
+        "en stock",
+        "disponible",
+        "in_stock",
+    }
+    unavailable_values = {
+        "0",
+        "false",
+        "no",
+        "unavailable",
+        "out of stock",
+        "outofstock",
+        "rupture",
+        "rupture de stock",
+        "epuise",
+        "indisponible",
+        "out_of_stock",
+    }
+    if normalized in available_values:
+        return True
+    if normalized in unavailable_values:
+        return False
+    if re.fullmatch(r"\d+", normalized):
+        return int(normalized) > 0
+    return None
+
+
+def _parse_feed_price(value):
+    text = _feed_text(value)
+    if not text:
+        return None
+    match = re.search(
+        r"(?<!\w)(?:\d{1,3}(?:[ .]\d{3})+|\d{1,3}(?:,\d{3})+|\d+)"
+        r"(?:[,.]\d{1,2})?(?!\w)",
+        text,
+    )
+    return parse_euro_price(match.group(0)) if match else None
+
+
+def _normalize_affiliate_product(record):
+    normalized_record = {
+        _feed_field_name(key): value for key, value in record.items()
+    }
+    result = {}
+    for output_field, aliases in AFFILIATE_FEED_FIELDS.items():
+        value = next(
+            (
+                normalized_record[alias]
+                for alias in aliases
+                if alias in normalized_record
+                and _feed_text(normalized_record[alias])
+            ),
+            None,
+        )
+        if output_field == "name":
+            value = _feed_text(value) if value is not None else ""
+            if not value:
+                return None
+        elif output_field == "price":
+            value = _parse_feed_price(value)
+        elif output_field == "stock":
+            value = _parse_feed_stock(value)
+        else:
+            value = _feed_text(value) if value is not None else ""
+        result[output_field] = value
+    if result["price"] is None:
+        raise ValueError(
+            f"Affiliate feed product {result['name']!r} has no valid price"
+        )
+    if not result["affiliate_url"]:
+        raise ValueError(
+            f"Affiliate feed product {result['name']!r} has no affiliate URL"
+        )
+    parsed_url = urlparse(result["affiliate_url"])
+    if parsed_url.scheme not in ("http", "https") or not parsed_url.hostname:
+        raise ValueError(
+            f"Affiliate feed product {result['name']!r} has an invalid affiliate URL"
+        )
+    return result
+
+
+def _xml_local_name(tag):
+    return tag.rsplit("}", 1)[-1].split(":")[-1]
+
+
+def _xml_product_records(root):
+    product_tags = {"product", "item", "offer", "entry"}
+    product_fields = {
+        alias
+        for aliases in AFFILIATE_FEED_FIELDS.values()
+        for alias in aliases
+    }
+    records = []
+    for element in root.iter():
+        if _feed_field_name(_xml_local_name(element.tag)) not in product_tags:
+            continue
+        record = {}
+        for child in element.iter():
+            if child is element:
+                continue
+            field_name = _feed_field_name(_xml_local_name(child.tag))
+            if field_name in product_fields and field_name not in record:
+                record[field_name] = "".join(child.itertext()).strip()
+        for key, value in element.attrib.items():
+            field_name = _feed_field_name(_xml_local_name(key))
+            if field_name in product_fields and field_name not in record:
+                record[field_name] = value
+        if record:
+            records.append(record)
+    return records
+
+
+def parse_affiliate_product_feed(source, *, feed_format=None):
+    """Parse an Awin-style XML/CSV product feed into normalized product records.
+
+    Each returned record contains ``name``, ``price`` (Decimal), ``stock``
+    (bool or None), and ``affiliate_url``. ``source`` may be a Path, bytes,
+    text, or a readable binary/text stream. The function does not perform
+    network requests.
+    """
+    if isinstance(source, Path):
+        raw_data = source.read_bytes()
+    elif hasattr(source, "read"):
+        raw_data = source.read()
+    elif isinstance(source, bytes):
+        raw_data = source
+    elif isinstance(source, str):
+        raw_data = source
+    else:
+        raise TypeError("Feed source must be a Path, text, bytes, or readable stream")
+
+    if isinstance(raw_data, bytes):
+        if len(raw_data) > MAX_RESPONSE_BYTES:
+            raise ValueError(
+                f"Affiliate feed exceeded the {MAX_RESPONSE_BYTES}-byte limit"
+            )
+        text = raw_data.decode("utf-8-sig")
+    elif isinstance(raw_data, str):
+        if len(raw_data.encode("utf-8")) > MAX_RESPONSE_BYTES:
+            raise ValueError(
+                f"Affiliate feed exceeded the {MAX_RESPONSE_BYTES}-byte limit"
+            )
+        text = raw_data.lstrip("\ufeff")
+    else:
+        raise TypeError("Readable feed stream must return text or bytes")
+
+    selected_format = (feed_format or "").strip().casefold()
+    if not selected_format:
+        selected_format = "xml" if text.lstrip().startswith("<") else "csv"
+    if selected_format not in ("xml", "csv"):
+        raise ValueError("Feed format must be 'xml' or 'csv'")
+
+    if selected_format == "xml":
+        if re.search(r"<!DOCTYPE|<!ENTITY", text, re.IGNORECASE):
+            raise ValueError("Affiliate XML feeds must not contain DTD or entities")
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as error:
+            raise ValueError("Affiliate XML feed is malformed") from error
+        records = _xml_product_records(root)
+    else:
+        try:
+            sample = text[:8192]
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(io.StringIO(text, newline=""), dialect=dialect)
+        if not reader.fieldnames:
+            raise ValueError("Affiliate CSV feed has no header row")
+        records = list(reader)
+
+    products = []
+    for record in records:
+        product = _normalize_affiliate_product(record)
+        if product is not None:
+            products.append(product)
+    return products
 
 
 def extract_explicit_retail_price(product):
@@ -1366,7 +2215,76 @@ def apply_retail_estimate_fallback(product):
     return True
 
 
+def fetch_affiliate_feed_products(store):
+    request = Request(
+        store["feed_url"],
+        headers={
+            "Accept": "application/xml,text/xml,text/csv,text/plain;q=0.9,*/*;q=0.8",
+            "User-Agent": "PokemonRestockMonitor/1.0 (+public affiliate feed reader)",
+        },
+    )
+    try:
+        with urlopen(request, timeout=25) as response:
+            feed_data = response.read(MAX_RESPONSE_BYTES + 1)
+    except HTTPError:
+        raise
+    except URLError:
+        LOG.warning("%s: network error while reading affiliate product feed", store["name"])
+        raise
+    if len(feed_data) > MAX_RESPONSE_BYTES:
+        raise ValueError(
+            f"{store['name']} affiliate feed exceeded {MAX_RESPONSE_BYTES} bytes"
+        )
+
+    records = parse_affiliate_product_feed(
+        feed_data,
+        feed_format=store.get("feed_format"),
+    )
+    products = {}
+    recognized_count = 0
+    for record in records:
+        if not is_sealed_pokemon_product(
+            {
+                "title": record["name"],
+                "product_type": "Pokémon TCG",
+                "tags": [],
+            }
+        ):
+            continue
+        recognized_count += 1
+        if record["stock"] is not True:
+            continue
+        product = {
+            "name": record["name"],
+            "series_keywords": "",
+            "url": record["affiliate_url"],
+            "image": None,
+            "price": str(record["price"]),
+            "price_is_from": False,
+            "retail_price": None,
+            "price_delta_eur": None,
+            "price_delta_percent": None,
+            "quantity": None,
+            "retail_prices": store.get("retail_prices", {}),
+            "retail_estimates": store.get("retail_estimates", {}),
+        }
+        products[record["affiliate_url"]] = product
+    return products, recognized_count
+
+
 def check_store(store):
+    if (
+        store.get("platform") == "ultrajeux_html"
+        and store.get("feed_url") is None
+    ):
+        return fetch_ultrajeux_catalog(store)
+    if store.get("source_mode") == "auto" or store.get("platform") == "auto":
+        if store.get("feed_url") is not None:
+            store["source_status"] = "Flux produit configuré"
+            return fetch_affiliate_feed_products(store)
+        return check_auto_store(store)
+    if store.get("feed_url") is not None:
+        return fetch_affiliate_feed_products(store)
     if store.get("platform") == "woocommerce":
         return fetch_woocommerce_products(store)
     if store.get("platform") == "philibert_html":
@@ -1617,7 +2535,24 @@ def main():
             "Set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable Telegram"
         )
 
-    stores = load_stores(args.config)
+    stores_by_host = {
+        urlparse(store["url"]).hostname: store
+        for store in load_stores(args.config)
+    }
+    for feed_store in load_affiliate_feed_stores(args.shops):
+        hostname = urlparse(feed_store["url"]).hostname
+        existing_store = stores_by_host.get(hostname)
+        if existing_store is None:
+            stores_by_host[hostname] = feed_store
+        elif feed_store.get("feed_url") is not None:
+            existing_store["feed_url"] = feed_store["feed_url"]
+            existing_store["feed_format"] = feed_store["feed_format"]
+        elif existing_store.get("platform") in ("shopify", "affiliate_feed"):
+            existing_store["platform"] = "auto"
+            existing_store["source_mode"] = "auto"
+            existing_store["id"] = feed_store["id"]
+            existing_store["name"] = feed_store["name"]
+    stores = list(stores_by_host.values())
     state = load_state(args.state)
     stock = load_stock_snapshot(args.stock)
     market_price_cache = load_market_price_cache(args.market_cache)
@@ -1634,8 +2569,8 @@ def main():
         args.interval,
     )
     LOG.info(
-        "Only configured public HTTPS Shopify/WooCommerce feeds and explicitly "
-        "configured public catalog pages are checked."
+        "Checks configured public feeds, standard Shopify/WooCommerce catalogs, "
+        "and public product JSON-LD; no access-control bypass is used."
     )
 
     while True:
@@ -1652,6 +2587,12 @@ def main():
                     stop_cycle = True
                     retry_wait = retry_after_seconds(error, args.interval)
                     break
+                if store.get("source_mode") == "auto":
+                    save_auto_discovery_status(
+                        stock,
+                        store,
+                        f"Endpoint public indisponible (HTTP {error.code})",
+                    )
                 continue
             except (URLError, TimeoutError, ValueError) as error:
                 LOG.warning(
@@ -1659,15 +2600,30 @@ def main():
                     store["name"],
                     error,
                 )
+                if store.get("source_mode") == "auto":
+                    status = (
+                        "Erreur réseau pendant la découverte automatique"
+                        if isinstance(error, (URLError, TimeoutError))
+                        else "Réponse non exploitable par la découverte automatique"
+                    )
+                    save_auto_discovery_status(stock, store, status)
                 continue
 
             if not recognized_count:
                 LOG.warning(
-                    "%s: no sealed Pokémon TCG products found in the first %s "
-                    "catalog products; keeping previous state.",
+                    "%s: no sealed Pokémon TCG products recognized; source=%s.",
                     store["name"],
-                    SHOPIFY_PRODUCT_LIMIT,
+                    store.get("source_status", "standard catalog"),
                 )
+                if store.get("source_mode") == "auto":
+                    save_auto_discovery_status(
+                        stock,
+                        store,
+                        store.get(
+                            "source_status",
+                            "Aucune source publique standard détectée",
+                        ),
+                    )
                 continue
 
             market_price_updates = 0
@@ -1691,14 +2647,7 @@ def main():
                     retail_estimate_updates,
                 )
 
-            stock["stores"][store["id"]] = {
-                "name": store["name"],
-                "checked_at": datetime.now(timezone.utc).isoformat(
-                    timespec="seconds"
-                ),
-                "products": list(products.values()),
-            }
-
+            checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             store_states = state["searches"]
             previous = store_states.get(store["id"])
             current_products = {
@@ -1714,6 +2663,18 @@ def main():
             else:
                 previous_products = previous["products"]
                 new_urls = current_products.keys() - previous_products.keys()
+                for url, product in products.items():
+                    previous_product = previous_products.get(url, {})
+                    recently_available_at = previous_product.get(
+                        "recently_available_at"
+                    )
+                    if url in new_urls:
+                        recently_available_at = checked_at
+                    if isinstance(recently_available_at, str):
+                        product["recently_available_at"] = recently_available_at
+                        current_products[url][
+                            "recently_available_at"
+                        ] = recently_available_at
                 alerts_succeeded = True
                 for url in sorted(new_urls):
                     if not send_alert(products[url], store["name"]):
@@ -1726,6 +2687,14 @@ def main():
                 )
                 if alerts_succeeded:
                     store_states[store["id"]] = {"products": current_products}
+
+            stock["stores"][store["id"]] = {
+                "name": store["name"],
+                "url": store["url"],
+                "checked_at": checked_at,
+                "source_status": store.get("source_status"),
+                "products": list(products.values()),
+            }
 
         save_state(args.state, state)
         save_market_price_cache(args.market_cache, market_price_cache)
