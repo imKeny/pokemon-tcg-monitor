@@ -78,6 +78,28 @@ EXCLUDED_PRODUCT_TERMS = (
     "porte cle",
     "accessoire",
     "goodies",
+    "protection",
+    "phoenix shield",
+)
+PARKAGE_API = "https://back.parkage.com/api/parkage/search/autocomplete"
+PARKAGE_IMAGE_BASE = "https://embedded.parkage.com/files/img/"
+PARKAGE_SEARCH_TERMS = (
+    "booster pokemon",
+    "display pokemon",
+    "boite de boosters pokemon",
+    "etb pokemon",
+    "dresseur d'elite pokemon",
+    "coffret pokemon",
+    "pokebox pokemon",
+    "tin pokemon",
+    "bundle pokemon",
+    "blister pokemon",
+    "tripack pokemon",
+    "collection premium pokemon",
+)
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
 
 
@@ -230,10 +252,11 @@ def load_stores(path):
             "woocommerce",
             "philibert_html",
             "ultrajeux_html",
+            "parkage_api",
         ):
             raise ValueError(
                 f"Store #{index} platform must be 'shopify', 'woocommerce', "
-                "'philibert_html', or 'ultrajeux_html'"
+                "'philibert_html', 'ultrajeux_html', or 'parkage_api'"
             )
         url = normalize_store_url(store.get("url"), f"Store #{index}")
         hostname = urlparse(url).hostname
@@ -476,10 +499,12 @@ def load_affiliate_feed_stores(path):
             "woocommerce",
             "philibert_html",
             "ultrajeux_html",
+            "parkage_api",
         ):
             raise ValueError(
                 f"Shop #{index} platform must be 'auto', 'shopify', "
-                "'woocommerce', 'philibert_html', or 'ultrajeux_html'"
+                "'woocommerce', 'philibert_html', 'ultrajeux_html', "
+                "or 'parkage_api'"
             )
         catalog_urls = shop.get("catalog_urls", [])
         if platform == "ultrajeux_html":
@@ -1105,6 +1130,76 @@ def fetch_ultrajeux_catalog(store):
     return products, recognized_count
 
 
+def fetch_parkage_catalog(store):
+    normalized_products = {}
+    for index, term in enumerate(PARKAGE_SEARCH_TERMS):
+        if index:
+            time.sleep(random.uniform(1, 2))
+        request = Request(
+            f"{PARKAGE_API}?{urlencode({'search': term})}",
+            headers={
+                "Accept": "application/json",
+                "Accept-Language": "fr-FR,fr;q=0.9",
+                "Origin": store["url"],
+                "Referer": store["url"] + "/",
+                "User-Agent": BROWSER_USER_AGENT,
+            },
+        )
+        with urlopen(request, timeout=25) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise ValueError(f"{store['name']} API response too large")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{store['name']} API returned invalid JSON") from error
+        records = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if (
+                not isinstance(record, dict)
+                or record.get("deleted")
+                or record.get("visibility") != 1
+                or record.get("type") != "sealed"
+                or not isinstance(record.get("id"), int)
+            ):
+                continue
+            title = record.get("name_fr") or record.get("name_en")
+            price = record.get("price_discount") or record.get("price")
+            if not isinstance(title, str) or not isinstance(price, (int, float)):
+                continue
+            stock = record.get("stock")
+            image = record.get("image_url_1")
+            product_url = f"{store['url']}/fr/{record['id']}"
+            normalized_products[product_url] = {
+                "title": unescape(title),
+                "handle": None,
+                "url": product_url,
+                "product_type": "Pokémon TCG",
+                "tags": [],
+                "images": (
+                    [{"src": PARKAGE_IMAGE_BASE + image.lstrip("/"), "alt": title}]
+                    if isinstance(image, str) and image.strip()
+                    else []
+                ),
+                "variants": [
+                    {
+                        "available": isinstance(stock, int) and stock > 0,
+                        "price": str(price),
+                        "inventory_quantity": stock,
+                    }
+                ],
+            }
+    products, recognized_count = parse_shopify_products(
+        {"products": list(normalized_products.values())}, store
+    )
+    store["source_status"] = (
+        f"API publique Parkage ({recognized_count} produits scellés)"
+    )
+    return products, recognized_count
+
+
 class ProductJsonLdParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -1228,7 +1323,7 @@ def _read_public_response(url, *, accept, store):
         headers={
             "Accept": accept,
             "Accept-Language": "fr-FR,fr;q=0.9",
-            "User-Agent": "PokemonRestockMonitor/1.0 (+public catalog monitor)",
+            "User-Agent": BROWSER_USER_AGENT,
         },
     )
     with urlopen(request, timeout=20) as response:
@@ -2273,6 +2368,8 @@ def fetch_affiliate_feed_products(store):
 
 
 def check_store(store):
+    if store.get("platform") == "parkage_api" and store.get("feed_url") is None:
+        return fetch_parkage_catalog(store)
     if (
         store.get("platform") == "ultrajeux_html"
         and store.get("feed_url") is None

@@ -21,25 +21,12 @@
       "feed_format": "auto"
     },
     {
-      "name": "BrazStore",
-      "url": "https://brazstore.fr",
-      "source_mode": "auto",
-      "feed_url": null,
-      "feed_format": "auto"
-    },
-    {
       "name": "Parkage",
       "url": "https://parkage.com",
       "source_mode": "auto",
       "feed_url": null,
-      "feed_format": "auto"
-    },
-    {
-      "name": "PokeBase",
-      "url": "https://pokebase.fr",
-      "source_mode": "auto",
-      "feed_url": null,
-      "feed_format": "auto"
+      "feed_format": "auto",
+      "platform": "parkage_api"
     }
   ]
 }

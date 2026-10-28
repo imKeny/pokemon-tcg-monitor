@@ -34,6 +34,49 @@
         background: linear-gradient(120deg, #1a2240cc, #151a28cc);
       }
       .hero-inner, main { width: min(1480px, 100%); margin: 0 auto; }
+      .hero-inner { position: relative; }
+      .pika-track {
+        position: absolute;
+        top: -.4rem;
+        right: 0;
+        width: 150px;
+        height: 110px;
+        pointer-events: none;
+      }
+      .pika-track::before {
+        position: absolute;
+        inset: 38px 8px 6px;
+        border: 2px dashed #ffcb0555;
+        border-radius: 50%;
+        content: "";
+      }
+      .pika-orbit {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 0;
+        height: 0;
+        animation: pika-x 3.5s ease-in-out infinite alternate;
+      }
+      .pika-walker {
+        position: absolute;
+        left: 0;
+        top: -28px;
+        width: 56px;
+        height: 56px;
+        margin-left: -28px;
+        animation: pika-y 3.5s ease-in-out -1.75s infinite alternate;
+      }
+      .pika-walker svg { display: block; width: 100%; height: 100%; overflow: visible; animation: pika-face 7s steps(1) infinite; }
+      .pika-bob { animation: pika-hop .35s ease-in-out infinite; }
+      .pika-leg-a { animation: pika-step .35s ease-in-out infinite; transform-origin: 50% 0; transform-box: fill-box; }
+      .pika-leg-b { animation: pika-step .35s ease-in-out infinite reverse; transform-origin: 50% 0; transform-box: fill-box; }
+      @keyframes pika-x { from { transform: translateX(-58px); } to { transform: translateX(58px); } }
+      @keyframes pika-y { from { transform: translateY(-22px); } to { transform: translateY(22px); } }
+      @keyframes pika-face { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1); } }
+      @keyframes pika-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+      @keyframes pika-step { 0%, 100% { transform: rotate(-22deg); } 50% { transform: rotate(22deg); } }
+      @media (max-width: 640px) { .pika-track { display: none; } }
       h1 {
         display: inline-flex;
         align-items: center;
@@ -54,35 +97,12 @@
           0 6px 20px #ffcb0538;
       }
       .title-pokeball {
-        position: relative;
         display: inline-block;
         flex: 0 0 auto;
-        width: .72em;
-        aspect-ratio: 1;
-        overflow: hidden;
-        border: 2px solid #203c78;
-        border-radius: 50%;
-        background: linear-gradient(to bottom, #f8f9ff 0 46%, #203c78 46% 54%, #f8f9ff 54%);
-        box-shadow: 0 3px 10px #00000055;
+        width: .85em;
+        height: .85em;
+        filter: drop-shadow(0 3px 6px #00000066);
         animation: pokeball-bob 2.4s ease-in-out infinite;
-      }
-      .title-pokeball::before {
-        position: absolute;
-        inset: 0 0 50%;
-        background: #e84852;
-        content: "";
-      }
-      .title-pokeball::after {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 30%;
-        aspect-ratio: 1;
-        border: 2px solid #203c78;
-        border-radius: 50%;
-        background: #fff;
-        content: "";
-        transform: translate(-50%, -50%);
       }
       @keyframes pokeball-bob {
         0%, 100% { transform: translateY(0) rotate(-8deg); }
@@ -150,11 +170,6 @@
         font-weight: 750;
         letter-spacing: .08em;
         text-transform: uppercase;
-      }
-      .merchant-feed-status {
-        color: #aab5c9;
-        font-size: .68rem;
-        font-weight: 500;
       }
       .merchant-filters { display: flex; flex-wrap: wrap; gap: .55rem; }
       .merchant-filter {
@@ -427,15 +442,57 @@
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
         .title-pokeball { animation: none; }
+        .pika-orbit, .pika-walker, .pika-walker svg, .pika-bob, .pika-leg-a, .pika-leg-b { animation: none; }
       }
     </style>
   </head>
   <body>
     <header class="hero">
       <div class="hero-inner">
+        <div class="pika-track" aria-hidden="true">
+          <div class="pika-orbit">
+            <div class="pika-walker">
+              <svg viewBox="0 0 64 64">
+                <g class="pika-bob">
+                  <path d="M12 40 L6 30 L14 31 L10 20 L20 26 L18 38 Z" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5" stroke-linejoin="round"/>
+                  <ellipse cx="30" cy="40" rx="14" ry="11" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5"/>
+                  <path d="M20 32 L26 33 M19 38 L26 38" stroke="#7a4b12" stroke-width="2" stroke-linecap="round"/>
+                  <path d="M38 20 L36 6 L44 14 Z" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5" stroke-linejoin="round"/>
+                  <path d="M36 6 L38.4 9.6 L35.4 10.4 Z" fill="#222"/>
+                  <path d="M48 20 L56 8 L54 22 Z" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5" stroke-linejoin="round"/>
+                  <path d="M56 8 L53.6 12 L55.4 13 Z" fill="#222"/>
+                  <circle cx="44" cy="28" r="13" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.5"/>
+                  <circle cx="49" cy="26" r="2.2" fill="#222"/>
+                  <circle cx="49.7" cy="25.3" r=".7" fill="#fff"/>
+                  <circle cx="50" cy="33" r="3" fill="#e84852"/>
+                  <path d="M55 30 q1.4 .6 1 2" stroke="#222" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+                </g>
+                <rect class="pika-leg-a" x="26" y="48" width="5" height="10" rx="2.5" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.2"/>
+                <rect class="pika-leg-b" x="36" y="48" width="5" height="10" rx="2.5" fill="#ffcb05" stroke="#7a4b12" stroke-width="1.2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
         <h1 class="dashboard-title">
+          <svg class="title-pokeball" viewBox="0 0 100 100" role="img" aria-label="Poké Ball">
+            <defs>
+              <radialGradient id="pb-shine" cx=".32" cy=".28" r=".7">
+                <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
+                <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+              </radialGradient>
+              <clipPath id="pb-clip"><circle cx="50" cy="50" r="46"/></clipPath>
+            </defs>
+            <g clip-path="url(#pb-clip)">
+              <rect width="100" height="50" fill="#e84852"/>
+              <rect y="50" width="100" height="50" fill="#f8f9ff"/>
+              <rect y="44" width="100" height="12" fill="#1d2a52"/>
+              <circle cx="50" cy="50" r="46" fill="url(#pb-shine)"/>
+            </g>
+            <circle cx="50" cy="50" r="46" fill="none" stroke="#1d2a52" stroke-width="6"/>
+            <circle cx="50" cy="50" r="15" fill="#f8f9ff" stroke="#1d2a52" stroke-width="6"/>
+            <circle cx="50" cy="50" r="6" fill="#fff" stroke="#1d2a52" stroke-width="2"/>
+          </svg>
           Suivi Pokémon TCG
-          <span class="title-pokeball" role="img" aria-label="Poké Ball"></span>
         </h1>
         <p>
           <span class="update-label">Dernier relevé</span>
@@ -471,15 +528,6 @@
                     {% endif %}
                   </span>
                   <span>{{ store.get("name", "Boutique") }}</span>
-                  {% if store.get("source_mode") == "auto" %}
-                    <span class="merchant-feed-status">
-                      {{ store.get("source_status", "Découverte automatique active") }}
-                    </span>
-                  {% elif store.get("feed_configured") is defined %}
-                    <span class="merchant-feed-status">
-                      {% if store.get("feed_configured") %}Flux actif{% else %}Flux à renseigner{% endif %}
-                    </span>
-                  {% endif %}
                   <span class="merchant-badge" data-recent-badge {% if not store.get("recent_count") %}hidden{% endif %}>{{ store.get("recent_count", 0) }}</span>
                 </button>
               {% endfor %}
