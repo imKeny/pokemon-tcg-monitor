@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from flask import Flask, render_template
+from flask import Flask, render_template, send_from_directory
 
 
 app = Flask(__name__)
@@ -302,6 +302,15 @@ app.jinja_env.filters["product_kind"] = identify_product_kind
 app.jinja_env.filters["product_language"] = identify_product_language
 app.jinja_env.filters["local_datetime"] = format_local_datetime
 app.jinja_env.filters["series"] = identify_series
+
+
+@app.get("/logo.jpg")
+def logo():
+    response = send_from_directory(
+        Path(__file__).parent, "logo.jpg", mimetype="image/jpeg"
+    )
+    response.cache_control.max_age = 86400
+    return response
 
 
 @app.get("/")
