@@ -568,11 +568,33 @@ def load_affiliate_feed_stores(path):
             "philibert_html",
             "ultrajeux_html",
             "parkage_api",
+            "prestashop_json",
         ):
             raise ValueError(
                 f"Shop #{index} platform must be 'auto', 'shopify', "
                 "'woocommerce', 'philibert_html', 'ultrajeux_html', "
-                "or 'parkage_api'"
+                "'parkage_api', or 'prestashop_json'"
+            )
+        search_terms = shop.get("search_terms", [])
+        categories = shop.get("categories", [])
+        if (
+            not isinstance(search_terms, list)
+            or len(search_terms) > 30
+            or any(
+                not isinstance(term, str) or not 2 <= len(term.strip()) <= 60
+                for term in search_terms
+            )
+            or not isinstance(categories, list)
+            or len(categories) > 30
+            or any(
+                not isinstance(category, str)
+                or not re.fullmatch(r"[0-9]+-[a-z0-9-]+", category)
+                for category in categories
+            )
+        ):
+            raise ValueError(
+                f"Shop #{index} search_terms must be short strings and "
+                "categories PrestaShop slugs like '2060-nouveautes'"
             )
         collection = shop.get("collection")
         if collection is not None and (
@@ -617,6 +639,8 @@ def load_affiliate_feed_stores(path):
             "collections": validate_collections(
                 shop.get("collections"), f"Shop #{index}"
             ),
+            "search_terms": [term.strip() for term in search_terms],
+            "categories": categories,
             "catalog_urls": catalog_urls,
             "feed_url": feed_url,
             "feed_format": None if feed_format == "auto" else feed_format,
@@ -776,6 +800,102 @@ def fetch_shopify_catalog(store):
         f"{recognized_count} scellés)"
     )
     return products, recognized_count
+
+
+PRESTASHOP_SEARCH_TERMS = (
+    "display pokemon",
+    "etb pokemon",
+    "coffret pokemon",
+    "booster pokemon",
+    "tripack pokemon",
+    "duopack pokemon",
+    "bundle pokemon",
+    "pokebox",
+    "tin pokemon",
+    "blister pokemon",
+)
+
+
+def _prestashop_image(product):
+    cover = product.get("cover")
+    if not isinstance(cover, dict):
+        return None
+    sizes = cover.get("bySize") if isinstance(cover.get("bySize"), dict) else {}
+    for key in ("large_default", "medium_default", "default_md"):
+        entry = sizes.get(key)
+        if isinstance(entry, dict) and isinstance(entry.get("url"), str):
+            return entry["url"]
+    large = cover.get("large")
+    return large.get("url") if isinstance(large, dict) else None
+
+
+def fetch_prestashop_catalog(store):
+    queries = [
+        (f"{store['url']}/recherche?" + urlencode({"controller": "search", "s": term}))
+        for term in (store.get("search_terms") or PRESTASHOP_SEARCH_TERMS)
+    ] + [f"{store['url']}/{category}" for category in store.get("categories", [])]
+    page_size = 50
+    max_pages = store.get("max_pages", MAX_CATALOG_PAGES)
+    normalized_products = {}
+    request_count = 0
+    for query_url in queries:
+        for page in range(1, max_pages + 1):
+            if request_count:
+                time.sleep(random.uniform(0.6, 1.2))
+            request_count += 1
+            separator = "&" if "?" in query_url else "?"
+            body, charset = _read_public_response(
+                f"{query_url}{separator}{urlencode({'resultsPerPage': page_size, 'page': page})}",
+                accept="application/json",
+                store=store,
+                extra_headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+            try:
+                payload = json.loads(body.decode(charset, errors="replace"))
+            except json.JSONDecodeError as error:
+                raise ValueError(f"{store['name']} listing is not valid JSON") from error
+            products = payload.get("products") if isinstance(payload, dict) else None
+            if not isinstance(products, list):
+                raise ValueError(f"{store['name']} response has no products list")
+            for product in products:
+                if not isinstance(product, dict) or not isinstance(product.get("name"), str):
+                    continue
+                product_url = product.get("canonical_url") or product.get("url")
+                if not isinstance(product_url, str):
+                    continue
+                image = _prestashop_image(product)
+                description = re.sub(r"<[^>]+>", " ", str(product.get("description_short") or ""))
+                normalized_products[product.get("id_product") or product_url] = {
+                    "title": unescape(product["name"]),
+                    "handle": None,
+                    "url": product_url,
+                    "product_type": str(product.get("category_name") or ""),
+                    "vendor": str(product.get("manufacturer_name") or ""),
+                    "tags": (
+                        ["Précommande"]
+                        if detect_preorder(f"{product['name']} {description}")
+                        else []
+                    ),
+                    "images": [{"src": image, "alt": product["name"]}] if image else [],
+                    "variants": [
+                        {
+                            "available": bool(product.get("add_to_cart_url")),
+                            "price": product.get("price_amount"),
+                        }
+                    ],
+                }
+            pagination = payload.get("pagination") if isinstance(payload, dict) else None
+            pages_count = pagination.get("pages_count") if isinstance(pagination, dict) else 1
+            if not isinstance(pages_count, int) or page >= pages_count:
+                break
+    parsed, recognized_count = parse_shopify_products(
+        {"products": list(normalized_products.values())}, store
+    )
+    store["source_status"] = (
+        f"Catalogue PrestaShop public ({len(normalized_products)} produits lus, "
+        f"{recognized_count} scellés)"
+    )
+    return parsed, recognized_count
 
 
 def fetch_woocommerce_products(store):
@@ -1515,10 +1635,11 @@ def parse_product_jsonld(document, store):
     )
 
 
-def _read_public_response(url, *, accept, store):
+def _read_public_response(url, *, accept, store, extra_headers=None):
     request = Request(
         url,
         headers={
+            **(extra_headers or {}),
             "Accept": accept,
             "Accept-Language": "fr-FR,fr;q=0.9",
             "User-Agent": BROWSER_USER_AGENT,
@@ -2594,6 +2715,8 @@ def fetch_affiliate_feed_products(store):
 def check_store(store):
     if store.get("platform") == "parkage_api" and store.get("feed_url") is None:
         return fetch_parkage_catalog(store)
+    if store.get("platform") == "prestashop_json" and store.get("feed_url") is None:
+        return fetch_prestashop_catalog(store)
     if (
         store.get("platform") == "shopify"
         and store.get("source_mode") == "auto"
@@ -2882,10 +3005,17 @@ def main():
             existing_store["feed_url"] = feed_store["feed_url"]
             existing_store["feed_format"] = feed_store["feed_format"]
         elif existing_store.get("platform") in ("shopify", "affiliate_feed"):
-            existing_store["platform"] = "auto"
+            existing_store["platform"] = (
+                feed_store["platform"]
+                if feed_store["platform"] != "auto"
+                else "auto"
+            )
             existing_store["source_mode"] = "auto"
             existing_store["id"] = feed_store["id"]
             existing_store["name"] = feed_store["name"]
+            for key in ("collection", "collections", "max_pages"):
+                if feed_store.get(key):
+                    existing_store[key] = feed_store[key]
     stores = list(stores_by_host.values())
     state = load_state(args.state)
     stock = load_stock_snapshot(args.stock)

@@ -29,6 +29,56 @@
       "platform": "parkage_api"
     },
     {
+      "name": "Poke-Geek",
+      "url": "https://www.poke-geek.fr",
+      "platform": "shopify",
+      "source_mode": "auto",
+      "collections": [
+        "produits-scelles-fr",
+        "produit-scelle-japonais",
+        "produit-scelle-anglais",
+        "produit-scelle-coreen",
+        "precommande"
+      ]
+    },
+    {
+      "name": "Monpokestore",
+      "url": "https://www.monpokestore.fr",
+      "platform": "shopify",
+      "source_mode": "auto",
+      "collections": [
+        "scelles",
+        "display",
+        "etb",
+        "coffret",
+        "trio-pack",
+        "booster-blister",
+        "pokebox-minitins",
+        "nouveautes"
+      ]
+    },
+    {
+      "name": "Blazing Tail",
+      "url": "https://www.blazingtail.fr",
+      "platform": "prestashop_json",
+      "source_mode": "auto",
+      "search_terms": [
+        "display pokemon",
+        "etb pokemon",
+        "coffret pokemon",
+        "booster pokemon",
+        "tripack pokemon",
+        "duopack pokemon",
+        "bundle pokemon",
+        "pokebox",
+        "tin pokemon",
+        "blister pokemon"
+      ],
+      "categories": [
+        "2060-nouveautes"
+      ]
+    },
+    {
       "name": "Exemple Shopify (à copier)",
       "url": "https://exemple-boutique.fr",
       "platform": "shopify",
