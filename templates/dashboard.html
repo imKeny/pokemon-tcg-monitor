@@ -180,6 +180,45 @@
       .filter-field select:hover { border-color: #9aaeff; }
       .filter-field select:focus-visible { border-color: #9aaeff; box-shadow: 0 0 0 3px #8da3ff25; }
       .filter-field option { color: #f3f5fb; background: #191e29; }
+      .view-toggle {
+        display: inline-flex;
+        padding: 3px;
+        border: 1px solid #8799d34d;
+        border-radius: 12px;
+        background: #0e1320aa;
+      }
+      .view-toggle button {
+        min-height: 36px;
+        padding: 0 .9rem;
+        border: 0;
+        border-radius: 9px;
+        color: #aab7dc;
+        background: transparent;
+        font: inherit;
+        font-size: .85rem;
+        font-weight: 650;
+        cursor: pointer;
+        transition: background .2s ease, color .2s ease;
+      }
+      .view-toggle button:hover { color: #fff; }
+      .view-toggle button[aria-pressed="true"] {
+        color: #10131b;
+        background: linear-gradient(135deg, #ffd34d, #ff9d2e);
+      }
+      .unified-meta { display: grid; gap: .4rem; margin-top: .6rem; font-size: .78rem; }
+      .unified-store { color: #a4f0c9; font-weight: 700; }
+      .unified-offers summary { color: #bdcaff; cursor: pointer; font-weight: 650; }
+      .unified-offers ul { margin: .4rem 0 0; padding: 0; list-style: none; }
+      .unified-offers li {
+        display: flex;
+        justify-content: space-between;
+        gap: .8rem;
+        padding: .3rem 0;
+        border-top: 1px solid #ffffff0d;
+        color: #b4bdce;
+      }
+      .unified-offers a { color: #c3ceff; text-decoration: none; }
+      .unified-offers a:hover { text-decoration: underline; }
       .filter-reset {
         min-height: 42px;
         padding: 0 .9rem;
@@ -561,6 +600,10 @@
           <span class="search-hint" id="search-count" aria-live="polite"></span>
         </div>
         <div class="filter-bar">
+          <div class="view-toggle" role="group" aria-label="Mode d'affichage">
+            <button type="button" data-view="stores" aria-pressed="true">Par boutique</button>
+            <button type="button" data-view="unified" aria-pressed="false" title="Un seul affichage par produit, avec la boutique la moins chère">Vue unifiée · meilleur prix</button>
+          </div>
           <label class="filter-field">
             <span>Type de produit</span>
             <select id="filter-kind"><option value="">Tous les types</option></select>
@@ -616,6 +659,122 @@
         {% endif %}
       </div>
     </header>
+    {% macro product_card(product, store, store_index, order, unified=false, offers=none) %}
+    {% set delta = product.get("price_delta_percent") %}
+    {% set retail_reference = product.get("retail_reference") or {} %}
+    {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
+    {% set status = product|product_status %}
+    <article class="product-card" data-product-card{% if unified %} data-unified-card{% endif %} data-status="{{ status }}" data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-deal="{{ 1 if product.get('is_good_deal') else 0 }}" data-delta="{{ product.get('price_delta_percent') if product.get('price_delta_percent') is not none else '' }}" data-order="{{ order }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+      <div class="product-image">
+        {% if product.get("image") %}
+          <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
+            <img src="{{ product.get('image') }}" alt="{{ product.get('name', 'Produit Pokémon TCG') }}" loading="lazy">
+          </a>
+        {% else %}
+          <span class="image-placeholder">Image indisponible</span>
+        {% endif %}
+        {% if status == "rupture" %}
+          <span class="stock-pill soldout-pill">Rupture</span>
+        {% elif status == "precommande" %}
+          <span class="stock-pill preorder-pill">📅 Précommande</span>
+        {% else %}
+          <span class="stock-pill">En stock</span>
+        {% endif %}
+        {% if product.get("is_hot_series") %}
+          <span class="stock-pill hot-pill">🔥 Série recherchée</span>
+        {% endif %}
+        {% if product.get("is_good_deal") %}
+          <span class="stock-pill deal-pill">🔥 Bon Plan{% if delta is not none and delta|float < 0 %} · {{ delta|percentage }}{% endif %}</span>
+        {% endif %}
+        {% if product.get("is_recent") %}
+          <span class="stock-pill recent-pill">Nouveau · 24 h</span>
+        {% endif %}
+      </div>
+      <div class="product-content">
+        <a class="product-title" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
+          {{ product.get("name", "Produit sans nom") }}
+        </a>
+        <div><span class="series-tag">{{ series }}</span></div>
+        {% if unified %}
+          <div class="unified-meta">
+            <span class="unified-store">🏪 {{ store.get("name", "Boutique") }} · meilleur prix</span>
+            {% if offers %}
+              <details class="unified-offers">
+                <summary>{{ offers|length }} autre{% if offers|length > 1 %}s{% endif %} offre{% if offers|length > 1 %}s{% endif %}</summary>
+                <ul>
+                  {% for offer in offers %}
+                    <li>
+                      <a href="{{ offer.url }}" target="_blank" rel="noopener noreferrer">{{ offer.store }}</a>
+                      <span>{% if offer.status == "rupture" %}rupture{% elif offer.price is none %}prix à venir{% else %}{{ offer.price|price }}{% endif %}{% if offer.status == "precommande" %} · précommande{% endif %}</span>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% endif %}
+          </div>
+        {% endif %}
+        <div class="product-data">
+          <div class="data-item">
+            <span class="data-label">Prix boutique</span>
+            <span class="data-value store-price">
+              {% if product.get("price") is none and product.get("is_preorder") %}Prix à venir{% else %}{% if product.get("price_is_from") %}Dès {% endif %}{{ product.get("price")|price }}{% endif %}
+            </span>
+          </div>
+          <div class="data-item">
+            <span class="data-label">
+              {% if retail_reference.get("type") == "estimate" %}Estimation retail{% elif retail_reference.get("type") == "market_average" %}Moyenne marché eBay{% elif retail_reference.get("type") == "official_metadata" %}Retail repéré sur la fiche{% elif product.get("retail_price") is not none %}Retail configuré{% else %}Prix retail{% endif %}
+            </span>
+            {% if retail_reference.get("type") == "estimate" %}
+              <span class="data-value subtle">
+                {{ retail_reference.get("minimum")|price }}
+                {% if retail_reference.get("minimum") != retail_reference.get("maximum") %}
+                  – {{ retail_reference.get("maximum")|price }}
+                {% endif %}
+              </span>
+            {% elif retail_reference.get("type") == "market_average" %}
+              <span class="data-value">{{ product.get("retail_price")|price }}</span>
+              <small class="estimate-note">
+                {{ retail_reference.get("listing_count", 0) }} annonces actives · pas un MSRP
+              </small>
+            {% elif product.get("retail_price") is not none %}
+              <span class="data-value">{{ product.get("retail_price")|price }}</span>
+            {% else %}
+              <span class="data-value subtle">Non vérifié</span>
+            {% endif %}
+          </div>
+          <div class="data-item">
+            <span class="data-label">Écart</span>
+            <span class="data-value {% if delta is none %}delta-neutral{% elif delta|float > 0 %}delta-positive{% elif delta|float < 0 %}delta-negative{% else %}delta-neutral{% endif %}">
+              {{ delta|percentage }}
+            </span>
+            {% if product.get("price_delta_eur") is not none %}
+              <span class="data-value subtle {% if delta|float > 0 %}delta-positive{% elif delta|float < 0 %}delta-negative{% endif %}">
+                {{ product.get("price_delta_eur")|signed_price }}
+              </span>
+            {% endif %}
+            {% if delta is not none and retail_reference.get("type") in ("estimate", "market_average") %}
+              <small class="estimate-note">
+                {% if retail_reference.get("type") == "market_average" %}marché eBay{% else %}estimatif{% endif %}
+              </small>
+            {% endif %}
+          </div>
+          <div class="data-item">
+            <span class="data-label">Quantité</span>
+            <span class="data-value subtle">
+              {% if product.get("quantity") is not none %}
+                {{ product.get("quantity") }} <small>flux public</small>
+              {% else %}
+                Non communiquée
+              {% endif %}
+            </span>
+          </div>
+        </div>
+        <a class="product-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
+          Voir la fiche produit <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </article>
+    {% endmacro %}
     <main>
       {% set product_count = namespace(value=0) %}
       {% for store in stores %}
@@ -627,6 +786,7 @@
           Le tableau se remplira après un cycle de surveillance réussi.
         </div>
       {% else %}
+        <div id="view-stores">
         {% for store in stores %}
           {% set products = store.get("products", []) %}
           {% set store_index = loop.index0 %}
@@ -641,107 +801,27 @@
               </div>
               <div class="product-grid">
                 {% for product in products %}
-                  {% set delta = product.get("price_delta_percent") %}
-                  {% set retail_reference = product.get("retail_reference") or {} %}
-                  {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
-                  {% set status = product|product_status %}
-                  <article class="product-card" data-product-card data-status="{{ status }}" data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-deal="{{ 1 if product.get('is_good_deal') else 0 }}" data-delta="{{ product.get('price_delta_percent') if product.get('price_delta_percent') is not none else '' }}" data-order="{{ loop.index0 }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
-                    <div class="product-image">
-                      {% if product.get("image") %}
-                        <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
-                          <img src="{{ product.get('image') }}" alt="{{ product.get('name', 'Produit Pokémon TCG') }}" loading="lazy">
-                        </a>
-                      {% else %}
-                        <span class="image-placeholder">Image indisponible</span>
-                      {% endif %}
-                      {% if status == "rupture" %}
-                        <span class="stock-pill soldout-pill">Rupture</span>
-                      {% elif status == "precommande" %}
-                        <span class="stock-pill preorder-pill">📅 Précommande</span>
-                      {% else %}
-                        <span class="stock-pill">En stock</span>
-                      {% endif %}
-                      {% if product.get("is_hot_series") %}
-                        <span class="stock-pill hot-pill">🔥 Série recherchée</span>
-                      {% endif %}
-                      {% if product.get("is_good_deal") %}
-                        <span class="stock-pill deal-pill">🔥 Bon Plan{% if delta is not none and delta|float < 0 %} · {{ delta|percentage }}{% endif %}</span>
-                      {% endif %}
-                      {% if product.get("is_recent") %}
-                        <span class="stock-pill recent-pill">Nouveau · 24 h</span>
-                      {% endif %}
-                    </div>
-                    <div class="product-content">
-                      <a class="product-title" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
-                        {{ product.get("name", "Produit sans nom") }}
-                      </a>
-                      <div><span class="series-tag">{{ series }}</span></div>
-                      <div class="product-data">
-                        <div class="data-item">
-                          <span class="data-label">Prix boutique</span>
-                          <span class="data-value store-price">
-                            {% if product.get("price") is none and product.get("is_preorder") %}Prix à venir{% else %}{% if product.get("price_is_from") %}Dès {% endif %}{{ product.get("price")|price }}{% endif %}
-                          </span>
-                        </div>
-                        <div class="data-item">
-                          <span class="data-label">
-                            {% if retail_reference.get("type") == "estimate" %}Estimation retail{% elif retail_reference.get("type") == "market_average" %}Moyenne marché eBay{% elif retail_reference.get("type") == "official_metadata" %}Retail repéré sur la fiche{% elif product.get("retail_price") is not none %}Retail configuré{% else %}Prix retail{% endif %}
-                          </span>
-                          {% if retail_reference.get("type") == "estimate" %}
-                            <span class="data-value subtle">
-                              {{ retail_reference.get("minimum")|price }}
-                              {% if retail_reference.get("minimum") != retail_reference.get("maximum") %}
-                                – {{ retail_reference.get("maximum")|price }}
-                              {% endif %}
-                            </span>
-                          {% elif retail_reference.get("type") == "market_average" %}
-                            <span class="data-value">{{ product.get("retail_price")|price }}</span>
-                            <small class="estimate-note">
-                              {{ retail_reference.get("listing_count", 0) }} annonces actives · pas un MSRP
-                            </small>
-                          {% elif product.get("retail_price") is not none %}
-                            <span class="data-value">{{ product.get("retail_price")|price }}</span>
-                          {% else %}
-                            <span class="data-value subtle">Non vérifié</span>
-                          {% endif %}
-                        </div>
-                        <div class="data-item">
-                          <span class="data-label">Écart</span>
-                          <span class="data-value {% if delta is none %}delta-neutral{% elif delta|float > 0 %}delta-positive{% elif delta|float < 0 %}delta-negative{% else %}delta-neutral{% endif %}">
-                            {{ delta|percentage }}
-                          </span>
-                          {% if product.get("price_delta_eur") is not none %}
-                            <span class="data-value subtle {% if delta|float > 0 %}delta-positive{% elif delta|float < 0 %}delta-negative{% endif %}">
-                              {{ product.get("price_delta_eur")|signed_price }}
-                            </span>
-                          {% endif %}
-                          {% if delta is not none and retail_reference.get("type") in ("estimate", "market_average") %}
-                            <small class="estimate-note">
-                              {% if retail_reference.get("type") == "market_average" %}marché eBay{% else %}estimatif{% endif %}
-                            </small>
-                          {% endif %}
-                        </div>
-                        <div class="data-item">
-                          <span class="data-label">Quantité</span>
-                          <span class="data-value subtle">
-                            {% if product.get("quantity") is not none %}
-                              {{ product.get("quantity") }} <small>flux public</small>
-                            {% else %}
-                              Non communiquée
-                            {% endif %}
-                          </span>
-                        </div>
-                      </div>
-                      <a class="product-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer">
-                        Voir la fiche produit <span aria-hidden="true">↗</span>
-                      </a>
-                    </div>
-                  </article>
+                  {{ product_card(product, store, store_index, loop.index0) }}
                 {% endfor %}
               </div>
             </section>
           {% endif %}
         {% endfor %}
+        </div>
+        <section class="store" id="view-unified" aria-labelledby="unified-title" hidden>
+          <div class="store-heading">
+            <h2 id="unified-title">Vue unifiée · meilleur prix</h2>
+            <span class="store-meta">
+              {{ unified|length }} produit{% if unified|length != 1 %}s{% endif %} unique{% if unified|length != 1 %}s{% endif %}
+              <span class="store-time">· {{ merged_offers }} offres comparées</span>
+            </span>
+          </div>
+          <div class="product-grid">
+            {% for entry in unified %}
+              {{ product_card(entry.product, entry.store, entry.store_index, loop.index0, true, entry.offers) }}
+            {% endfor %}
+          </div>
+        </section>
         <div class="empty no-results" id="no-results">
           <strong>Aucun produit ne correspond à cette recherche</strong>
           Essaie un nom de produit, une boutique ou une série.
@@ -762,7 +842,12 @@
         if (!searchInput || !countLabel || !noResults) return;
 
         const cards = [...document.querySelectorAll("[data-product-card]")];
+        const storeCards = cards.filter((card) => !card.hasAttribute("data-unified-card"));
         const sections = [...document.querySelectorAll("[data-store-section]")];
+        const storesView = document.getElementById("view-stores");
+        const unifiedView = document.getElementById("view-unified");
+        const viewButtons = [...document.querySelectorAll("[data-view]")];
+        let currentView = localStorage.getItem("pokemon-dashboard-view") === "unified" ? "unified" : "stores";
         const storeFilters = [...document.querySelectorAll("[data-store-filter]")];
         const kindSelect = document.getElementById("filter-kind");
         const langSelect = document.getElementById("filter-lang");
@@ -772,7 +857,7 @@
         let selectedStore = "all";
         const fillOptions = (select, key) => {
           const counts = new Map();
-          for (const card of cards) {
+          for (const card of storeCards) {
             const value = card.dataset[key];
             if (value) counts.set(value, (counts.get(value) || 0) + 1);
           }
@@ -796,7 +881,7 @@
         };
         const sortCards = () => {
           const compare = comparators[sortSelect.value] || comparators.default;
-          for (const section of sections) {
+          for (const section of [...sections, unifiedView].filter(Boolean)) {
             const grid = section.querySelector(".product-grid");
             const sorted = [...grid.children].sort((a, b) => compare(a, b) || comparators.default(a, b));
             grid.append(...sorted);
@@ -824,7 +909,8 @@
               || (status === "deal" ? card.dataset.deal === "1" : card.dataset.status === status);
             const matches = matchesSearch && matchesStore && matchesKind && matchesLang && matchesStatus;
             card.hidden = !matches;
-            if (matches) visibleCount += 1;
+            const inCurrentView = card.hasAttribute("data-unified-card") === (currentView === "unified");
+            if (matches && inCurrentView) visibleCount += 1;
           }
           sortCards();
           for (const section of sections) {
@@ -864,7 +950,20 @@
             applyFilter();
           });
         }
-        applyFilter();
+        const setView = (view) => {
+          currentView = view;
+          localStorage.setItem("pokemon-dashboard-view", view);
+          if (storesView) storesView.hidden = view === "unified";
+          if (unifiedView) unifiedView.hidden = view !== "unified";
+          for (const button of viewButtons) {
+            button.setAttribute("aria-pressed", String(button.dataset.view === view));
+          }
+          applyFilter();
+        };
+        for (const button of viewButtons) {
+          button.addEventListener("click", () => setView(button.dataset.view));
+        }
+        setView(currentView);
       })();
     </script>
   </body>

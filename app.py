@@ -323,6 +323,112 @@ def identify_product_language(product_name, keywords=""):
     return "Français"
 
 
+NAME_STOPWORDS = frozenset(
+    "pokemon pokemons en francais fr vf vo version de du la le les des et a au aux "
+    "scelle scelles neuf etat defaut issu aleatoire".split()
+)
+VARIANT_MARKERS = frozenset(
+    "premium ultra upc illustration poster pins figurine cube mini pokebox tin "
+    "bundle tripack duopack blister deck collection".split()
+)
+SET_CODE_PATTERN = re.compile(r"\b(ev|me|eb|sv|sm|xy|sl)0*(\d{1,2})(?: (\d))?\b")
+
+
+def _name_signature(product):
+    text = normalize_text(product.get("name", ""))
+    code_match = SET_CODE_PATTERN.search(text)
+    code = None
+    if code_match:
+        code = code_match.group(1) + code_match.group(2) + (
+            f".{code_match.group(3)}" if code_match.group(3) else ""
+        )
+        text = text.replace(code_match.group(0), " ")
+    tokens = set()
+    for token in text.split():
+        if token in NAME_STOPWORDS:
+            continue
+        if len(token) > 3 and token.endswith("s"):
+            token = token[:-1]
+        tokens.add(token)
+    numbers = {token for token in tokens if token.isdigit()}
+    return {
+        "code": code,
+        "tokens": tokens - numbers,
+        "numbers": numbers,
+        "markers": {token for token in tokens if token in VARIANT_MARKERS},
+        "kind": identify_product_kind(product.get("name", ""), product.get("series_keywords", "")),
+        "lang": identify_product_language(product.get("name", ""), product.get("series_keywords", "")),
+    }
+
+
+def _same_product(first, second):
+    if first["kind"] != second["kind"] or first["lang"] != second["lang"]:
+        return False
+    if first["code"] != second["code"]:
+        return False
+    if first["markers"] != second["markers"]:
+        return False
+    if first["numbers"] and second["numbers"] and first["numbers"] != second["numbers"]:
+        return False
+    smaller = min(len(first["tokens"]), len(second["tokens"]))
+    if not smaller:
+        return False
+    overlap = len(first["tokens"] & second["tokens"]) / smaller
+    # Sans code d'extension, on exige des noms presque identiques.
+    return overlap >= (0.75 if first["code"] else 0.9)
+
+
+def _offer_rank(product):
+    try:
+        price = Decimal(str(product.get("price")))
+        if not price.is_finite():
+            raise InvalidOperation
+    except (InvalidOperation, ValueError):
+        price = None
+    return (
+        identify_product_status(product) == "rupture",
+        price is None,
+        price if price is not None else Decimal(0),
+    )
+
+
+def build_unified_view(stores):
+    clusters = []
+    for store_index, store in enumerate(stores):
+        for product in store.get("products", []):
+            signature = _name_signature(product)
+            entry = (store_index, store, product)
+            for cluster in clusters:
+                if _same_product(cluster["signature"], signature):
+                    cluster["entries"].append(entry)
+                    break
+            else:
+                clusters.append({"signature": signature, "entries": [entry]})
+    unified = []
+    for cluster in clusters:
+        entries = sorted(cluster["entries"], key=lambda item: _offer_rank(item[2]))
+        store_index, store, best = entries[0]
+        unified.append(
+            {
+                "product": best,
+                "store": store,
+                "store_index": store_index,
+                "offer_count": len(entries),
+                "offers": [
+                    {
+                        "store": other_store.get("name", "Boutique"),
+                        "price": other.get("price"),
+                        "url": other.get("url"),
+                        "status": identify_product_status(other),
+                    }
+                    for _, other_store, other in entries[1:]
+                ],
+            }
+        )
+    unified.sort(key=lambda entry: entry["product"].get("name", "").casefold())
+    return unified
+
+
 app.jinja_env.filters["product_kind"] = identify_product_kind
 app.jinja_env.filters["product_status"] = identify_product_status
 app.jinja_env.filters["product_language"] = identify_product_language
@@ -394,9 +500,12 @@ def dashboard():
         store["merchant_mark"] = merchant_mark(store["name"])
         stores.append(store)
     stores.sort(key=lambda store: store.get("name", "").casefold())
+    unified = build_unified_view(stores)
     return render_template(
         "dashboard.html",
         stores=stores,
+        unified=unified,
+        merged_offers=sum(entry["offer_count"] for entry in unified),
         updated_at=stock.get("updated_at"),
     )
 
