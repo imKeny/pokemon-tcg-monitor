@@ -854,6 +854,7 @@
         const sortSelect = document.getElementById("sort-by");
         const statusSelect = document.getElementById("filter-status");
         const resetButton = document.getElementById("filter-reset");
+        const FILTERS_KEY = "pokemon-dashboard-filters";
         let selectedStore = "all";
         const fillOptions = (select, key) => {
           const counts = new Map();
@@ -922,10 +923,34 @@
           countLabel.textContent = query
             ? `${visibleCount} produit${visibleCount === 1 ? "" : "s"} trouvé${visibleCount === 1 ? "" : "s"}`
             : `${visibleCount} produit${visibleCount === 1 ? "" : "s"} affiché${visibleCount === 1 ? "" : "s"}`;
-          sessionStorage.setItem("pokemon-dashboard-search", searchInput.value);
+          localStorage.setItem(FILTERS_KEY, JSON.stringify({
+            search: searchInput.value,
+            kind: kindSelect.value,
+            lang: langSelect.value,
+            status: statusSelect.value,
+            sort: sortSelect.value,
+            store: selectedStore,
+          }));
         };
 
-        searchInput.value = sessionStorage.getItem("pokemon-dashboard-search") || "";
+        // La page se recharge toutes les 60 s : on restaure les filtres sauvegardés.
+        try {
+          const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}");
+          searchInput.value = saved.search || "";
+          kindSelect.value = saved.kind || "";
+          langSelect.value = saved.lang || "";
+          statusSelect.value = saved.status || "";
+          sortSelect.value = saved.sort || "default";
+          const savedStore = String(saved.store ?? "all");
+          if (storeFilters.some((button) => button.dataset.storeFilter === savedStore)) {
+            selectedStore = savedStore;
+            for (const button of storeFilters) {
+              button.setAttribute("aria-pressed", String(button.dataset.storeFilter === savedStore));
+            }
+          }
+        } catch {
+          localStorage.removeItem(FILTERS_KEY);
+        }
         searchInput.addEventListener("input", applyFilter);
         for (const select of [kindSelect, langSelect, sortSelect, statusSelect]) {
           select.addEventListener("change", applyFilter);
