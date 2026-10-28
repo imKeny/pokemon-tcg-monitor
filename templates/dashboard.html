@@ -680,7 +680,7 @@
                         <div class="data-item">
                           <span class="data-label">Prix boutique</span>
                           <span class="data-value store-price">
-                            {% if product.get("price_is_from") %}Dès {% endif %}{{ product.get("price")|price }}
+                            {% if product.get("price") is none and product.get("is_preorder") %}Prix à venir{% else %}{% if product.get("price_is_from") %}Dès {% endif %}{{ product.get("price")|price }}{% endif %}
                           </span>
                         </div>
                         <div class="data-item">

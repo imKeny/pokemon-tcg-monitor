@@ -933,12 +933,14 @@ def parse_philibert_products(document, store, stock_by_pid=None):
             price_text,
             re.IGNORECASE,
         )
-        if not title or not match or parsed_url.hostname != urlparse(store["url"]).hostname:
-            continue
-        price = parse_euro_price(match.group("amount"))
-        if price is None:
-            continue
         normalized_text = normalize(" ".join(card["text"]))
+        is_preorder = "dispo :" in normalized_text
+        if not title or parsed_url.hostname != urlparse(store["url"]).hostname:
+            continue
+        price = parse_euro_price(match.group("amount")) if match else None
+        # Une précommande sans prix publié reste suivie, avec un prix « à venir ».
+        if price is None and not is_preorder:
+            continue
         if stock_by_pid is not None and card.get("pid"):
             is_available = stock_by_pid.get(card["pid"]) is True
         else:
@@ -946,7 +948,6 @@ def parse_philibert_products(document, store, stock_by_pid=None):
                 term in normalized_text
                 for term in ("rupture de stock", "epuise")
             )
-        is_preorder = "dispo :" in normalized_text or "badge-comingsoon" in normalized_text
         if is_preorder:
             is_available = True
         image = urljoin(store["url"], card["image"]) if card["image"] else None
@@ -958,7 +959,12 @@ def parse_philibert_products(document, store, stock_by_pid=None):
                 "product_type": "",
                 "tags": ["Précommande"] if is_preorder else [],
                 "images": [{"src": image, "alt": title}] if image else [],
-                "variants": [{"available": is_available, "price": str(price)}],
+                "variants": [
+                    {
+                        "available": is_available,
+                        "price": str(price) if price is not None else None,
+                    }
+                ],
             }
         )
     return parse_shopify_products({"products": normalized_products}, store)
@@ -2618,7 +2624,11 @@ def send_alert(product, store_name, *, test=False):
         formatted_price = f"{Decimal(price):,.2f}".replace(",", " ").replace(".", ",")
         price_label = f"À partir de {formatted_price} €" if product.get("price_is_from") else f"{formatted_price} €"
     else:
-        price_label = "Non communiqué par la boutique"
+        price_label = (
+            "Prix à venir"
+            if product.get("is_preorder")
+            else "Non communiqué par la boutique"
+        )
     quantity = product.get("quantity")
     quantity_label = (
         f"{quantity} (donnée du flux public)"
