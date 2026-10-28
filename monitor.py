@@ -111,6 +111,26 @@ BROWSER_USER_AGENT = (
 )
 
 
+PREORDER_TERMS = (
+    "precommande",
+    "pre commande",
+    "preorder",
+    "pre order",
+    "a paraitre",
+    "prochainement",
+    "bientot disponible",
+    "date de sortie",
+)
+HOT_SERIES_TERMS = (
+    "upc",
+    "ultra premium",
+    "noctali",
+    "noctalie",
+    "mentali",
+    "mentalie",
+)
+
+
 def normalize(text):
     text = text.replace("’", "'").replace("‘", "'")
     text = unicodedata.normalize("NFKD", text.casefold())
@@ -121,6 +141,16 @@ def normalize(text):
 def contains_product_term(text, term):
     term_pattern = re.escape(term).replace(r"\ ", r"\s+")
     return re.search(r"(?<!\w)" + term_pattern + r"s?(?!\w)", text) is not None
+
+
+def detect_preorder(text):
+    cleaned = re.sub(r"[-_/]+", " ", normalize(text))
+    return any(contains_product_term(cleaned, term) for term in PREORDER_TERMS)
+
+
+def detect_hot_series(text):
+    cleaned = re.sub(r"[-_/]+", " ", normalize(text))
+    return any(contains_product_term(cleaned, term) for term in HOT_SERIES_TERMS)
 
 
 def parse_args():
@@ -1077,7 +1107,8 @@ def _extract_ultrajeux_products(document, store):
         if price is None:
             continue
         availability = normalize(" ".join(card["availability"]))
-        is_available = (
+        is_preorder = detect_preorder(availability)
+        is_available = is_preorder or (
             any(
                 term in availability
                 for term in ("disponible", "en stock", "ajouter au panier")
@@ -1101,7 +1132,7 @@ def _extract_ultrajeux_products(document, store):
                 "handle": None,
                 "url": product_url,
                 "product_type": " ".join(card["label"]).strip(),
-                "tags": [],
+                "tags": ["Précommande"] if is_preorder else [],
                 "images": [{"src": image, "alt": title}] if image else [],
                 "variants": [{"available": is_available, "price": str(price)}],
             }
@@ -1178,6 +1209,18 @@ def fetch_parkage_catalog(store):
             if not isinstance(title, str) or not isinstance(price, (int, float)):
                 continue
             stock = record.get("stock")
+            preorder_date = record.get("preorder_date")
+            is_preorder = bool(record.get("isPreorder"))
+            if not is_preorder and isinstance(preorder_date, str) and preorder_date.strip():
+                try:
+                    is_preorder = (
+                        datetime.fromisoformat(preorder_date.strip()).replace(
+                            tzinfo=timezone.utc
+                        )
+                        > datetime.now(timezone.utc)
+                    )
+                except ValueError:
+                    pass
             image = record.get("image_url_1")
             product_url = f"{store['url']}/fr/{record['id']}"
             normalized_products[product_url] = {
@@ -1185,9 +1228,10 @@ def fetch_parkage_catalog(store):
                 "handle": None,
                 "url": product_url,
                 "product_type": "Pokémon TCG",
-                "tags": [PARKAGE_LANGUAGES[record["lang"]]]
-                if record.get("lang") in PARKAGE_LANGUAGES
-                else [],
+                "tags": [
+                    *([PARKAGE_LANGUAGES[record["lang"]]] if record.get("lang") in PARKAGE_LANGUAGES else []),
+                    *(["Précommande"] if is_preorder else []),
+                ],
                 "images": (
                     [{"src": PARKAGE_IMAGE_BASE + image.lstrip("/"), "alt": title}]
                     if isinstance(image, str) and image.strip()
@@ -1195,7 +1239,7 @@ def fetch_parkage_catalog(store):
                 ),
                 "variants": [
                     {
-                        "available": isinstance(stock, int) and stock > 0,
+                        "available": (isinstance(stock, int) and stock > 0) or is_preorder,
                         "price": str(price),
                         "inventory_quantity": stock,
                     }
@@ -2203,7 +2247,17 @@ def parse_shopify_products(payload, store):
             )
 
         canonical_url = urlunparse(parsed_url._replace(fragment=""))
+        flag_text = " ".join(
+            [
+                product["title"],
+                str(product.get("product_type", "")),
+                tags_text,
+                str(product.get("handle", "")),
+            ]
+        )
         products[canonical_url] = {
+            "is_preorder": detect_preorder(flag_text),
+            "is_hot_series": detect_hot_series(flag_text),
             "name": product["title"].strip(),
             "series_keywords": series_keywords,
             "url": canonical_url,
@@ -2361,6 +2415,8 @@ def fetch_affiliate_feed_products(store):
             continue
         product = {
             "name": record["name"],
+            "is_preorder": detect_preorder(record["name"]),
+            "is_hot_series": detect_hot_series(record["name"]),
             "series_keywords": "",
             "url": record["affiliate_url"],
             "image": None,
@@ -2528,8 +2584,10 @@ def send_alert(product, store_name, *, test=False):
             "Les valeurs retail et l'écart sont fictifs."
         )
     else:
+        label = "Nouvelle précommande Pokémon TCG" if product.get("is_preorder") else "Nouveau produit Pokémon TCG scellé disponible"
+        hot = " 🔥 Série recherchée" if product.get("is_hot_series") else ""
         message = (
-            f"Nouveau produit Pokémon TCG scellé disponible ({store_name}) : "
+            f"{'📅' if product.get('is_preorder') else ''}{label}{hot} ({store_name}) : "
             f"{product['name']} — {product['url']}\n"
             f"💶 **Prix :** {price_label}\n"
             f"🏷️ **{retail_field_label} :** {retail_label}\n"
@@ -2559,16 +2617,21 @@ def send_alert(product, store_name, *, test=False):
                 discord_title = "🧪 **Aperçu du format Pokémon TCG**"
             else:
                 discord_description = (
-                    f"✅ En stock chez **{store_name}**\n"
+                    f"{'📅 **Précommande** chez' if product.get('is_preorder') else '✅ En stock chez'} **{store_name}**\n"
+                    f"{'🔥 **Série très recherchée**' + chr(10) if product.get('is_hot_series') else ''}"
                     f"💶 **Prix :** {price_label}\n"
                     f"[Voir la fiche et acheter ↗]({product['url']})"
                 )
-                discord_title = "🟢 **Nouveau stock Pokémon TCG**"
+                discord_title = (
+                    "📅 **Nouvelle précommande Pokémon TCG**"
+                    if product.get("is_preorder")
+                    else "🟢 **Nouveau stock Pokémon TCG**"
+                )
             embed = {
                 "title": product["name"][:256],
                 "url": product["url"],
                 "description": discord_description,
-                "color": 0x5865F2 if test else 0x2ECC71,
+                "color": 0x5865F2 if test else (0xF39C12 if product.get("is_preorder") else 0x2ECC71),
             }
             if product.get("image"):
                 embed["image"] = {"url": product["image"]}

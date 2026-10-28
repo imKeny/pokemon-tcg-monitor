@@ -365,6 +365,27 @@
         background: #36131be8;
       }
       .recent-pill::before { background: #ff526a; }
+      .preorder-pill {
+        top: auto;
+        bottom: .9rem;
+        border-color: #ffb44d77;
+        color: #ffe2b0;
+        background: #4a2a06f0;
+        font-size: .78rem;
+        box-shadow: 0 6px 18px #f39c1230;
+      }
+      .preorder-pill::before { background: #ffa21f; }
+      .hot-pill {
+        top: auto;
+        bottom: .9rem;
+        left: auto;
+        right: .9rem;
+        border-color: #ff7a4d77;
+        color: #ffd9c9;
+        background: #3d1409ee;
+      }
+      .hot-pill::before { content: none; }
+      .product-card[data-preorder="1"] { border-color: #ffa21f66; }
       .product-content { padding: 1.05rem 1.05rem 1.1rem; }
       .product-title {
         display: inline-block;
@@ -546,6 +567,15 @@
               <option value="recent">Nouveautés d'abord</option>
             </select>
           </label>
+          <label class="filter-field">
+            <span>Statut</span>
+            <select id="filter-status">
+              <option value="">Tous les produits</option>
+              <option value="preorder">Précommandes uniquement</option>
+              <option value="hot">Séries recherchées (UPC, Noctali, Mentali…)</option>
+              <option value="stock">En stock (hors précommandes)</option>
+            </select>
+          </label>
           <button class="filter-reset" type="button" id="filter-reset">Réinitialiser</button>
         </div>
         {% if stores %}
@@ -600,7 +630,7 @@
                   {% set delta = product.get("price_delta_percent") %}
                   {% set retail_reference = product.get("retail_reference") or {} %}
                   {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
-                  <article class="product-card" data-product-card data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-order="{{ loop.index0 }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+                  <article class="product-card" data-product-card data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-order="{{ loop.index0 }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
                     <div class="product-image">
                       {% if product.get("image") %}
                         <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
@@ -609,7 +639,14 @@
                       {% else %}
                         <span class="image-placeholder">Image indisponible</span>
                       {% endif %}
-                      <span class="stock-pill">En stock</span>
+                      {% if product.get("is_preorder") %}
+                        <span class="stock-pill preorder-pill">📅 Précommande</span>
+                      {% else %}
+                        <span class="stock-pill">En stock</span>
+                      {% endif %}
+                      {% if product.get("is_hot_series") %}
+                        <span class="stock-pill hot-pill">🔥 Série recherchée</span>
+                      {% endif %}
                       {% if product.get("is_recent") %}
                         <span class="stock-pill recent-pill">Nouveau · 24 h</span>
                       {% endif %}
@@ -710,6 +747,7 @@
         const kindSelect = document.getElementById("filter-kind");
         const langSelect = document.getElementById("filter-lang");
         const sortSelect = document.getElementById("sort-by");
+        const statusSelect = document.getElementById("filter-status");
         const resetButton = document.getElementById("filter-reset");
         let selectedStore = "all";
         const fillOptions = (select, key) => {
@@ -760,7 +798,12 @@
               || card.dataset.storeIndex === selectedStore;
             const matchesKind = !kindSelect.value || card.dataset.kind === kindSelect.value;
             const matchesLang = !langSelect.value || card.dataset.lang === langSelect.value;
-            const matches = matchesSearch && matchesStore && matchesKind && matchesLang;
+            const status = statusSelect.value;
+            const matchesStatus = !status
+              || (status === "preorder" && card.dataset.preorder === "1")
+              || (status === "hot" && card.dataset.hot === "1")
+              || (status === "stock" && card.dataset.preorder !== "1");
+            const matches = matchesSearch && matchesStore && matchesKind && matchesLang && matchesStatus;
             card.hidden = !matches;
             if (matches) visibleCount += 1;
           }
@@ -779,12 +822,13 @@
 
         searchInput.value = sessionStorage.getItem("pokemon-dashboard-search") || "";
         searchInput.addEventListener("input", applyFilter);
-        for (const select of [kindSelect, langSelect, sortSelect]) {
+        for (const select of [kindSelect, langSelect, sortSelect, statusSelect]) {
           select.addEventListener("change", applyFilter);
         }
         resetButton.addEventListener("click", () => {
           kindSelect.value = "";
           langSelect.value = "";
+          statusSelect.value = "";
           sortSelect.value = "default";
           searchInput.value = "";
           applyFilter();
