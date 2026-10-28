@@ -196,6 +196,11 @@ def parse_args():
         help="seconds between checks (default: 300; minimum: 60)",
     )
     parser.add_argument(
+        "--test-routing",
+        action="store_true",
+        help="send one test alert per region channel using real catalog products",
+    )
+    parser.add_argument(
         "--test-discord",
         action="store_true",
         help="send one test message using DISCORD_WEBHOOK_URL from .env",
@@ -3070,23 +3075,7 @@ def _minutes_since(iso_value, now_iso):
         return None
 
 
-def main():
-    args = parse_args()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-    load_local_environment(Path(__file__).with_name(".env"))
-    if args.test_discord:
-        test_discord_webhook()
-        return
-    if bool(os.environ.get("TELEGRAM_BOT_TOKEN")) != bool(
-        os.environ.get("TELEGRAM_CHAT_ID")
-    ):
-        raise ValueError(
-            "Set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable Telegram"
-        )
-
+def build_stores(args):
     stores_by_host = {
         urlparse(store["url"]).hostname: store
         for store in load_stores(args.config)
@@ -3111,7 +3100,66 @@ def main():
             for key in ("collection", "collections", "max_pages"):
                 if feed_store.get(key):
                     existing_store[key] = feed_store[key]
-    stores = list(stores_by_host.values())
+    return list(stores_by_host.values())
+
+
+def test_routing(args):
+    """Envoie un aperçu d'alerte par région, avec un vrai produit si on en trouve un."""
+    found = {}
+    for snapshot_store in load_stock_snapshot(args.stock)["stores"].values():
+        for product in snapshot_store.get("products", []):
+            if not product.get("out_of_stock") and product.get("url"):
+                found.setdefault(detect_region(product), (snapshot_store["name"], product))
+    if len(found) < len(DISCORD_REGIONS):
+        for store in build_stores(args):
+            if len(found) == len(DISCORD_REGIONS):
+                break
+            try:
+                products, _ = check_store(store)
+            except (HTTPError, URLError, TimeoutError, ValueError, OSError):
+                continue
+            for product in products.values():
+                found.setdefault(detect_region(product), (store["name"], product))
+    for region in DISCORD_REGIONS:
+        real = region in found
+        store_name, product = found.get(region) or (
+            "Boutique simulée",
+            {"name": f"Display Pokémon (produit simulé – région {region})", "url": "https://example.com/"},
+        )
+        if os.environ.get(f"DISCORD_WEBHOOK_{region.upper()}", "").strip():
+            channel = "salon dédié"
+        elif discord_webhook_for(region):
+            channel = "repli DISCORD_WEBHOOK_URL"
+        else:
+            channel = "aucun webhook"
+        ok = send_alert(product, store_name, test=True) if channel != "aucun webhook" else False
+        print(
+            f"- {region}: {'OK' if ok else 'ÉCHEC'} [{channel}] "
+            f"{'réel' if real else 'simulé'} · {product['name'][:55]} ({store_name})"
+        )
+
+
+def main():
+    args = parse_args()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    load_local_environment(Path(__file__).with_name(".env"))
+    if args.test_discord:
+        test_discord_webhook()
+        return
+    if args.test_routing:
+        test_routing(args)
+        return
+    if bool(os.environ.get("TELEGRAM_BOT_TOKEN")) != bool(
+        os.environ.get("TELEGRAM_CHAT_ID")
+    ):
+        raise ValueError(
+            "Set both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable Telegram"
+        )
+
+    stores = build_stores(args)
     state = load_state(args.state)
     stock = load_stock_snapshot(args.stock)
     market_price_cache = load_market_price_cache(args.market_cache)
