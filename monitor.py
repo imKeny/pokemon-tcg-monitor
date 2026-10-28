@@ -860,6 +860,7 @@ class PhilibertCatalogParser(HTMLParser):
                 "text": [],
                 "url": None,
                 "image": None,
+                "pid": attributes.get("data-pid"),
             }
         if self.card is None:
             return
@@ -918,7 +919,7 @@ class PhilibertCatalogParser(HTMLParser):
         self.stack = self.stack[:matching_index]
 
 
-def parse_philibert_products(document, store):
+def parse_philibert_products(document, store, stock_by_pid=None):
     parser = PhilibertCatalogParser()
     parser.feed(document)
     normalized_products = []
@@ -938,10 +939,16 @@ def parse_philibert_products(document, store):
         if price is None:
             continue
         normalized_text = normalize(" ".join(card["text"]))
-        is_available = not any(
-            term in normalized_text
-            for term in ("product.oos", "rupture de stock", "epuise")
-        )
+        if stock_by_pid is not None and card.get("pid"):
+            is_available = stock_by_pid.get(card["pid"]) is True
+        else:
+            is_available = not any(
+                term in normalized_text
+                for term in ("rupture de stock", "epuise")
+            )
+        is_preorder = "dispo :" in normalized_text or "badge-comingsoon" in normalized_text
+        if is_preorder:
+            is_available = True
         image = urljoin(store["url"], card["image"]) if card["image"] else None
         normalized_products.append(
             {
@@ -949,7 +956,7 @@ def parse_philibert_products(document, store):
                 "handle": None,
                 "url": product_url,
                 "product_type": "",
-                "tags": [],
+                "tags": ["Précommande"] if is_preorder else [],
                 "images": [{"src": image, "alt": title}] if image else [],
                 "variants": [{"available": is_available, "price": str(price)}],
             }
@@ -957,13 +964,44 @@ def parse_philibert_products(document, store):
     return parse_shopify_products({"products": normalized_products}, store)
 
 
+def fetch_philibert_stock(store, product_ids):
+    stocks = {}
+    for start in range(0, len(product_ids), 40):
+        chunk = product_ids[start : start + 40]
+        request = Request(
+            f"{store['url']}/fr/ajax/stock/{','.join(chunk)}",
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Referer": store["catalog_url"],
+                "User-Agent": BROWSER_USER_AGENT,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        with urlopen(request, timeout=20) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{store['name']} stock endpoint returned invalid JSON") from error
+        chunk_stocks = payload.get("stocks") if isinstance(payload, dict) else None
+        if not isinstance(chunk_stocks, dict):
+            raise ValueError(f"{store['name']} stock endpoint response has no stocks")
+        for pid, value in chunk_stocks.items():
+            stocks[str(pid)] = value is True or (
+                isinstance(value, int) and not isinstance(value, bool) and value > 0
+            )
+    return stocks
+
+
 def fetch_philibert_catalog(store):
     request = Request(
         store["catalog_url"],
         headers={
-            "User-Agent": "PokemonRestockMonitor/1.0 (+public catalog monitor)",
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "fr-FR,fr;q=0.9",
+            "User-Agent": BROWSER_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Upgrade-Insecure-Requests": "1",
         },
     )
     try:
@@ -980,7 +1018,14 @@ def fetch_philibert_catalog(store):
     except URLError:
         LOG.warning("%s: network error while reading public catalog", store["name"])
         raise
-    return parse_philibert_products(document, store)
+    # La fiche liste charge le stock via /fr/ajax/stock/<ids>, absent du HTML statique.
+    parser = PhilibertCatalogParser()
+    parser.feed(document)
+    product_ids = [card["pid"] for card in parser.cards if card.get("pid")]
+    stock_by_pid = fetch_philibert_stock(store, product_ids) if product_ids else None
+    products, recognized_count = parse_philibert_products(document, store, stock_by_pid)
+    store["source_status"] = f"Catalogue Philibert + stock public ({recognized_count} produits scellés)"
+    return products, recognized_count
 
 
 class UltraJeuxCatalogParser(HTMLParser):
