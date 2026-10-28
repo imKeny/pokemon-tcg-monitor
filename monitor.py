@@ -79,6 +79,11 @@ EXCLUDED_PRODUCT_TERMS = (
     "porte cle",
     "accessoire",
     "goodies",
+    "artset",
+    "master set",
+    "grade",
+    "psa",
+    "cgc",
     "protection",
     "phoenix shield",
 )
@@ -264,6 +269,24 @@ def validate_catalog_urls(catalog_urls, hostname, store_name):
     return validated_urls
 
 
+def validate_collections(collections, label):
+    if collections is None:
+        return []
+    if (
+        not isinstance(collections, list)
+        or len(collections) > 20
+        or any(
+            not isinstance(handle, str)
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", handle)
+            for handle in collections
+        )
+    ):
+        raise ValueError(
+            f"{label} collections must be a list of up to 20 Shopify collection handles"
+        )
+    return collections
+
+
 def load_stores(path):
     with path.open(encoding="utf-8") as config_file:
         config = json.load(config_file)
@@ -374,6 +397,9 @@ def load_stores(path):
             "url": url,
             "platform": platform,
             "collection": collection,
+            "collections": validate_collections(
+                store.get("collections"), f"Store #{index}"
+            ),
             "catalog_url": catalog_url,
             "catalog_urls": catalog_urls,
             "product_category_ids": category_ids,
@@ -588,6 +614,9 @@ def load_affiliate_feed_stores(path):
             "url": url,
             "platform": platform,
             "collection": collection,
+            "collections": validate_collections(
+                shop.get("collections"), f"Shop #{index}"
+            ),
             "catalog_urls": catalog_urls,
             "feed_url": feed_url,
             "feed_format": None if feed_format == "auto" else feed_format,
@@ -704,30 +733,34 @@ def fetch_json(url):
 
 
 def fetch_shopify_catalog(store):
-    base = store["url"]
-    if store.get("collection"):
-        base += f"/collections/{store['collection']}"
+    collections = store.get("collections") or [store.get("collection")]
     page_size = SHOPIFY_PRODUCT_LIMIT
     max_pages = store.get("max_pages", MAX_CATALOG_PAGES)
     while True:
-        all_products = []
+        all_products = {}
         try:
-            for page in range(1, max_pages + 1):
-                if page > 1:
-                    time.sleep(random.uniform(0.6, 1.2))
-                payload = fetch_json(
-                    f"{base}/products.json?{urlencode({'limit': page_size, 'page': page})}"
-                )
-                page_products = (
-                    payload.get("products") if isinstance(payload, dict) else None
-                )
-                if not isinstance(page_products, list):
-                    raise ValueError(
-                        f"{store['name']} response has no Shopify products list"
+            for collection in collections:
+                base = store["url"]
+                if collection:
+                    base += f"/collections/{collection}"
+                for page in range(1, max_pages + 1):
+                    if page > 1 or all_products:
+                        time.sleep(random.uniform(0.6, 1.2))
+                    payload = fetch_json(
+                        f"{base}/products.json?{urlencode({'limit': page_size, 'page': page})}"
                     )
-                all_products.extend(page_products)
-                if len(page_products) < page_size:
-                    break
+                    page_products = (
+                        payload.get("products") if isinstance(payload, dict) else None
+                    )
+                    if not isinstance(page_products, list):
+                        raise ValueError(
+                            f"{store['name']} response has no Shopify products list"
+                        )
+                    for product in page_products:
+                        if isinstance(product, dict):
+                            all_products[product.get("id") or product.get("handle")] = product
+                    if len(page_products) < page_size:
+                        break
         except ValueError as error:
             # Pages trop lourdes (> limite de réponse) : on recommence avec des pages plus petites.
             if "exceeded" in str(error) and page_size > 50:
@@ -736,7 +769,7 @@ def fetch_shopify_catalog(store):
             raise
         break
     products, recognized_count = parse_shopify_products(
-        {"products": all_products}, store
+        {"products": list(all_products.values())}, store
     )
     store["source_status"] = (
         f"Catalogue Shopify public ({len(all_products)} produits lus, "
@@ -1615,7 +1648,12 @@ def is_sealed_pokemon_product(product):
     normalized_type = normalize(product_type)
     if normalized_type in ("carte pokemon", "pokemon card", "pokemon single"):
         return False
-    text = normalize(" ".join([title, product_type, *[str(tag) for tag in tags]]))
+    vendor = product.get("vendor", "")
+    text = normalize(
+        " ".join(
+            [title, product_type, str(vendor) if vendor else "", *[str(tag) for tag in tags]]
+        )
+    )
     return (
         "pokemon" in text
         and any(contains_product_term(text, term) for term in SEALED_PRODUCT_TERMS)

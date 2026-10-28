@@ -22,7 +22,15 @@
     {
       "name": "Kairyu",
       "url": "https://kairyu.fr",
-      "product_limit": 250
+      "collections": [
+        "frjap-scelle",
+        "display",
+        "etb",
+        "coffret-1",
+        "boosters-blister",
+        "pokebox-tins",
+        "nouveaute"
+      ]
     },
     {
       "name": "PokeStation",
