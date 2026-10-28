@@ -111,6 +111,16 @@ DISCORD_USERNAME = "Poké Hook Restock"
 DISCORD_AVATAR_URL = (
     "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
 )
+DISCORD_REGIONS = ("france", "japon", "anglais", "coree", "chine", "autre")
+ERROR_LOG_COOLDOWN_SECONDS = 6 * 60 * 60
+REGION_PATTERNS = (
+    ("japon", ("japonais", "japonaise", "japanese", "japan", "jap", "jp", "jpn")),
+    ("coree", ("coreen", "coreenne", "korean", "kr", "kor")),
+    ("chine", ("chinois", "chinoise", "chinese", "cn", "tw", "zh")),
+    ("anglais", ("anglais", "anglaise", "english", "eng", "us")),
+    ("autre", ("allemand", "german", "deutsch", "espagnol", "spanish", "italien", "italian")),
+)
+_error_last_sent = {}
 PARKAGE_LANGUAGES = {
     "jp": "Japonais",
     "kr": "Coréen",
@@ -206,6 +216,7 @@ def load_local_environment(path):
         "SHOPIFY_STORES",
         "EBAY_CLIENT_ID",
         "EBAY_CLIENT_SECRET",
+        *(f"DISCORD_WEBHOOK_{name.upper()}" for name in (*DISCORD_REGIONS, "logs")),
     }
     with path.open(encoding="utf-8") as env_file:
         for line_number, line in enumerate(env_file, start=1):
@@ -2755,6 +2766,57 @@ def check_store(store):
     return fetch_shopify_catalog(store)
 
 
+def _is_discord_webhook(url):
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname in ("discord.com", "discordapp.com")
+        and parsed.path.startswith("/api/webhooks/")
+    )
+
+
+def detect_region(product):
+    title = normalize(product.get("name", ""))
+    full = normalize(f"{product.get('name', '')} {product.get('series_keywords', '')}")
+    for source in (title, full):
+        for region, terms in REGION_PATTERNS:
+            if any(contains_product_term(source, term) for term in terms):
+                return region
+    return "france"
+
+
+def discord_webhook_for(region):
+    """Salon régional, sinon DISCORD_WEBHOOK_URL ; None si absent ou invalide."""
+    url = (
+        os.environ.get(f"DISCORD_WEBHOOK_{region.upper()}", "").strip()
+        or os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    )
+    return url if _is_discord_webhook(url) else None
+
+
+def report_error(key, message):
+    """Poste une erreur sur le salon logs, une seule fois par clé toutes les 6 h."""
+    webhook = os.environ.get("DISCORD_WEBHOOK_LOGS", "").strip()
+    if not _is_discord_webhook(webhook):
+        return
+    now = time.monotonic()
+    last_sent = _error_last_sent.get(key)
+    if last_sent is not None and now - last_sent < ERROR_LOG_COOLDOWN_SECONDS:
+        return
+    _error_last_sent[key] = now
+    try:
+        post_json(
+            webhook,
+            {
+                "username": DISCORD_USERNAME,
+                "avatar_url": DISCORD_AVATAR_URL,
+                "content": f"⚠️ {message}"[:1900],
+            },
+        )
+    except (HTTPError, URLError, RuntimeError, ValueError, OSError) as error:
+        LOG.error("Could not post to the logs channel: %s", type(error).__name__)
+
+
 def post_json(url, payload, *, telegram=False):
     request = Request(
         url,
@@ -2772,40 +2834,36 @@ def post_json(url, payload, *, telegram=False):
 
 
 def test_discord_webhook():
-    webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    parsed = urlparse(webhook)
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "discord.com"
-        or not parsed.path.startswith("/api/webhooks/")
-    ):
-        raise ValueError(
-            "DISCORD_WEBHOOK_URL is missing or is not a Discord webhook URL"
+    channels = [*DISCORD_REGIONS, "logs"]
+    sent = 0
+    for channel in channels:
+        url = (
+            os.environ.get(f"DISCORD_WEBHOOK_{channel.upper()}", "").strip()
+            or (os.environ.get("DISCORD_WEBHOOK_URL", "").strip() if channel != "logs" else "")
         )
-    request = Request(
-        webhook,
-        data=json.dumps(
-            {
-                "username": DISCORD_USERNAME,
-                "avatar_url": DISCORD_AVATAR_URL,
-                "content": "✅ Test du moniteur Pokémon TCG : webhook Discord opérationnel.",
-            }
-        ).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json", 
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=15) as response:
-            LOG.info("Discord test message accepted (HTTP %s)", response.status)
-    except HTTPError as error:
-        raise RuntimeError(
-            f"Discord rejected the test message (HTTP {error.code})"
-        ) from None
-    except URLError:
-        raise RuntimeError("Could not connect to Discord for the test message") from None
+        if not url:
+            print(f"- {channel}: non configuré")
+            continue
+        if not _is_discord_webhook(url):
+            print(f"- {channel}: URL de webhook invalide")
+            continue
+        try:
+            post_json(
+                url,
+                {
+                    "username": DISCORD_USERNAME,
+                    "avatar_url": DISCORD_AVATAR_URL,
+                    "content": f"✅ Test du moniteur Pokémon TCG : salon « {channel} » opérationnel.",
+                },
+            )
+            sent += 1
+            print(f"- {channel}: OK")
+        except HTTPError as error:
+            print(f"- {channel}: rejeté (HTTP {error.code})")
+        except (URLError, RuntimeError, ValueError, OSError):
+            print(f"- {channel}: erreur réseau")
+    if not sent:
+        raise ValueError("Aucun webhook Discord valide n'est configuré")
 
 
 def send_alert(product, store_name, *, test=False):
@@ -2900,7 +2958,8 @@ def send_alert(product, store_name, *, test=False):
     print(f"\n🔔 {message}", flush=True)
     successful = True
 
-    discord_webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+    region = detect_region(product)
+    discord_webhook = discord_webhook_for(region)
     if discord_webhook:
         try:
             if test:
@@ -2948,9 +3007,17 @@ def send_alert(product, store_name, *, test=False):
             post_json(discord_webhook, payload)
         except HTTPError as error:
             LOG.error("Discord notification failed (HTTP %s)", error.code)
+            report_error(
+                ("discord", region, error.code),
+                f"Discord « {region} » : HTTP {error.code} (dernier produit : {product['name'][:80]})",
+            )
             successful = False
-        except (URLError, RuntimeError, ValueError):
+        except (URLError, RuntimeError, ValueError, OSError) as error:
             LOG.error("Discord notification failed due to a network or response error")
+            report_error(
+                ("discord", region, type(error).__name__),
+                f"Discord « {region} » : {type(error).__name__} (dernier produit : {product['name'][:80]})",
+            )
             successful = False
 
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -3075,6 +3142,10 @@ def main():
             try:
                 products, recognized_count = check_store(store)
             except HTTPError as error:
+                report_error(
+                    ("store", store["name"], error.code),
+                    f"{store['name']} : HTTP {error.code} pendant la lecture du catalogue",
+                )
                 if error.code in (429, 503):
                     stop_cycle = True
                     retry_wait = retry_after_seconds(error, args.interval)
@@ -3091,6 +3162,10 @@ def main():
                     "%s: could not read public product catalog: %s",
                     store["name"],
                     error,
+                )
+                report_error(
+                    ("store", store["name"], type(error).__name__),
+                    f"{store['name']} : {type(error).__name__} pendant la lecture du catalogue",
                 )
                 if store.get("source_mode") == "auto":
                     status = (
@@ -3261,4 +3336,5 @@ if __name__ == "__main__":
         print("\nStopped.", file=sys.stderr)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         LOG.error("%s", error)
+        report_error(("fatal", type(error).__name__), f"Arrêt du bot : {type(error).__name__}")
         sys.exit(1)
