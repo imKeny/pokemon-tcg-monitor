@@ -32,6 +32,7 @@ MAX_RESPONSE_BYTES = 5_000_000
 EBAY_PRICE_CACHE_TTL_SECONDS = 24 * 60 * 60
 EBAY_EMPTY_CACHE_TTL_SECONDS = 6 * 60 * 60
 SHOPIFY_PRODUCT_LIMIT = 250
+MAX_CATALOG_PAGES = 12
 MIN_SHOPIFY_PRODUCT_LIMIT = 1
 SEALED_PRODUCT_TERMS = (
     "booster",
@@ -703,27 +704,44 @@ def fetch_json(url):
 
 
 def fetch_shopify_catalog(store):
-    limit = min(store.get("product_limit", SHOPIFY_PRODUCT_LIMIT), SHOPIFY_PRODUCT_LIMIT)
     base = store["url"]
     if store.get("collection"):
         base += f"/collections/{store['collection']}"
-    all_products = []
-    for page in range(1, 5):
-        if page > 1:
-            time.sleep(random.uniform(1, 2))
-        payload = fetch_json(
-            f"{base}/products.json?{urlencode({'limit': limit, 'page': page})}"
-        )
-        page_products = payload.get("products") if isinstance(payload, dict) else None
-        if not isinstance(page_products, list):
-            raise ValueError(f"{store['name']} response has no Shopify products list")
-        all_products.extend(page_products)
-        if len(page_products) < limit:
-            break
+    page_size = SHOPIFY_PRODUCT_LIMIT
+    max_pages = store.get("max_pages", MAX_CATALOG_PAGES)
+    while True:
+        all_products = []
+        try:
+            for page in range(1, max_pages + 1):
+                if page > 1:
+                    time.sleep(random.uniform(0.6, 1.2))
+                payload = fetch_json(
+                    f"{base}/products.json?{urlencode({'limit': page_size, 'page': page})}"
+                )
+                page_products = (
+                    payload.get("products") if isinstance(payload, dict) else None
+                )
+                if not isinstance(page_products, list):
+                    raise ValueError(
+                        f"{store['name']} response has no Shopify products list"
+                    )
+                all_products.extend(page_products)
+                if len(page_products) < page_size:
+                    break
+        except ValueError as error:
+            # Pages trop lourdes (> limite de réponse) : on recommence avec des pages plus petites.
+            if "exceeded" in str(error) and page_size > 50:
+                page_size = 50
+                continue
+            raise
+        break
     products, recognized_count = parse_shopify_products(
         {"products": all_products}, store
     )
-    store["source_status"] = f"Catalogue Shopify public ({recognized_count} produits scellés)"
+    store["source_status"] = (
+        f"Catalogue Shopify public ({len(all_products)} produits lus, "
+        f"{recognized_count} scellés)"
+    )
     return products, recognized_count
 
 
@@ -732,11 +750,14 @@ def fetch_woocommerce_products(store):
         f"{store['url']}/wp-json/wc/store/v1/products"
     )
     products = []
-    page_size = min(store["product_limit"], 100)
+    page_size = 100
+    max_products = page_size * MAX_CATALOG_PAGES
     page = 1
-    while len(products) < store["product_limit"]:
+    while len(products) < max_products:
+        if page > 1:
+            time.sleep(random.uniform(0.6, 1.2))
         params = {
-            "per_page": min(page_size, store["product_limit"] - len(products)),
+            "per_page": page_size,
             "page": page,
         }
         category_ids = store.get("product_category_ids", [])
@@ -751,7 +772,7 @@ def fetch_woocommerce_products(store):
         if len(payload) < params["per_page"]:
             break
         page += 1
-    return parse_woocommerce_products(products[:store["product_limit"]], store)
+    return parse_woocommerce_products(products[:max_products], store)
 
 
 def parse_woocommerce_products(payload, store):
@@ -1532,17 +1553,15 @@ def _record_auto_access_refusal(store, error):
 
 def check_auto_store(store):
     limit = min(store.get("product_limit", SHOPIFY_PRODUCT_LIMIT), 250)
-    shopify_endpoint = f"{store['url']}/products.json?{urlencode({'limit': limit})}"
     try:
-        result = _try_auto_json_catalog(
-            store,
-            shopify_endpoint,
-            parse_shopify_products,
-        )
+        result = fetch_shopify_catalog(store)
     except HTTPError as error:
-        return _record_auto_access_refusal(store, error)
-    if result is not None:
-        store["source_status"] = "Catalogue Shopify public"
+        if error.code not in (404, 405, 410):
+            return _record_auto_access_refusal(store, error)
+        result = None
+    except ValueError:
+        result = None
+    if result is not None and result[1] > 0:
         return result
 
     woo_endpoint = (
@@ -2559,14 +2578,7 @@ def check_store(store):
         return fetch_woocommerce_products(store)
     if store.get("platform") == "philibert_html":
         return fetch_philibert_catalog(store)
-    product_limit = store.get("product_limit", SHOPIFY_PRODUCT_LIMIT)
-    query = urlencode({"limit": product_limit})
-    collection = store.get("collection")
-    if collection:
-        endpoint = f"{store['url']}/collections/{collection}/products.json?{query}"
-    else:
-        endpoint = f"{store['url']}/products.json?{query}"
-    return parse_shopify_products(fetch_json(endpoint), store)
+    return fetch_shopify_catalog(store)
 
 
 def post_json(url, payload, *, telegram=False):
