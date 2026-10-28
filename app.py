@@ -276,6 +276,30 @@ def _matches_any(text, terms):
     )
 
 
+PREORDER_TERMS = (
+    "precommande",
+    "pre commande",
+    "preorder",
+    "pre order",
+    "a paraitre",
+    "prochainement",
+    "bientot disponible",
+)
+
+
+def identify_product_status(product):
+    if product.get("out_of_stock"):
+        return "rupture"
+    if product.get("is_preorder") or _matches_any(
+        normalize_text(
+            f"{product.get('name', '')} {product.get('series_keywords', '')}"
+        ),
+        PREORDER_TERMS,
+    ):
+        return "precommande"
+    return "disponible"
+
+
 def identify_product_kind(product_name, keywords=""):
     text = normalize_text(f"{product_name} {keywords}")
     title = normalize_text(product_name)
@@ -299,6 +323,7 @@ def identify_product_language(product_name, keywords=""):
 
 
 app.jinja_env.filters["product_kind"] = identify_product_kind
+app.jinja_env.filters["product_status"] = identify_product_status
 app.jinja_env.filters["product_language"] = identify_product_language
 app.jinja_env.filters["local_datetime"] = format_local_datetime
 app.jinja_env.filters["series"] = identify_series

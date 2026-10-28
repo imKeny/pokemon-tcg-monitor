@@ -97,6 +97,7 @@ PARKAGE_SEARCH_TERMS = (
     "tripack pokemon",
     "collection premium pokemon",
 )
+OUT_OF_STOCK_RETENTION_DAYS = 7
 PARKAGE_LANGUAGES = {
     "jp": "Japonais",
     "kr": "Coréen",
@@ -2858,12 +2859,26 @@ def main():
                 if alerts_succeeded:
                     store_states[store["id"]] = {"products": current_products}
 
+            retained = []
+            for old_product in stock["stores"].get(store["id"], {}).get("products", []):
+                old_url = old_product.get("url")
+                if not isinstance(old_url, str) or old_url in products:
+                    continue
+                since = old_product.get("out_of_stock_since") or checked_at
+                try:
+                    age = datetime.fromisoformat(checked_at) - datetime.fromisoformat(since)
+                except ValueError:
+                    continue
+                if age.days < OUT_OF_STOCK_RETENTION_DAYS:
+                    retained.append(
+                        {**old_product, "out_of_stock": True, "out_of_stock_since": since}
+                    )
             stock["stores"][store["id"]] = {
                 "name": store["name"],
                 "url": store["url"],
                 "checked_at": checked_at,
                 "source_status": store.get("source_status"),
-                "products": list(products.values()),
+                "products": [*products.values(), *retained],
             }
 
         save_state(args.state, state)
