@@ -3234,6 +3234,9 @@ def main():
                 "source_status": store.get("source_status"),
                 "products": [*products.values(), *retained],
             }
+            # Écriture immédiate : une nouvelle boutique apparaît sur le tableau de bord sans attendre la fin du cycle.
+            stock["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            save_stock_snapshot(args.stock, stock)
 
         save_state(args.state, state)
         save_market_price_cache(args.market_cache, market_price_cache)

@@ -647,7 +647,7 @@
                   <span class="merchant-mark" aria-hidden="true">
                     {{ store.get("merchant_mark", "?") }}
                     {% if store.get("favicon_url") %}
-                      <img class="merchant-icon" data-merchant-icon src="{{ store.get('favicon_url') }}" alt="" loading="lazy">
+                      <img class="merchant-icon" data-merchant-icon data-fallback="{{ store.get('favicon_fallback') or '' }}" src="{{ store.get('favicon_url') }}" alt="" loading="lazy">
                     {% endif %}
                   </span>
                   <span>{{ store.get("name", "Boutique") }}</span>
@@ -832,8 +832,14 @@
       (() => {
         document.querySelectorAll("[data-merchant-icon]").forEach((icon) => {
           icon.addEventListener("error", () => {
+            const fallback = icon.dataset.fallback;
+            if (fallback && icon.src !== fallback) {
+              icon.dataset.fallback = "";
+              icon.src = fallback;
+              return;
+            }
             icon.hidden = true;
-          }, { once: true });
+          });
         });
 
         const searchInput = document.getElementById("product-search");

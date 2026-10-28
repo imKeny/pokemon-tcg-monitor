@@ -106,6 +106,13 @@ def merchant_favicon_url(store):
     )
 
 
+def merchant_favicon_fallback(store):
+    google_url = merchant_favicon_url(store)
+    if google_url is None:
+        return None
+    return f"https://{urlsplit(store['url']).hostname}/favicon.ico"
+
+
 def format_price(value):
     if value is None:
         return "Non communiqué"
@@ -464,6 +471,7 @@ def dashboard():
             store["feed_configured"] = configured_shop["feed_configured"]
             store["source_mode"] = configured_shop["source_mode"]
         store["favicon_url"] = merchant_favicon_url(store)
+        store["favicon_fallback"] = merchant_favicon_fallback(store)
         recent_count = 0
         for product in store.get("products", []):
             recent = False
@@ -497,6 +505,7 @@ def dashboard():
             "source_status": "Découverte automatique active",
         }
         store["favicon_url"] = merchant_favicon_url(store)
+        store["favicon_fallback"] = merchant_favicon_fallback(store)
         store["merchant_mark"] = merchant_mark(store["name"])
         stores.append(store)
     stores.sort(key=lambda store: store.get("name", "").casefold())
