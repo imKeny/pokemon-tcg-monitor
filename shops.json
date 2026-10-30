@@ -3,6 +3,7 @@
     { "name": "Blazing Tail", "url": "https://www.blazingtail.fr", "platform": "prestashop_json", "enabled": true },
     { "name": "BrazStore", "url": "https://brazstore.fr", "platform": "shopify", "enabled": false },
     { "name": "Cards Hunter", "url": "https://cardshunter.fr", "platform": "shopify", "enabled": false },
+    { "name": "Comptoir des Écoliers", "url": "https://comptoirdesecoliers.com", "platform": "html_generic", "enabled": true },
     { "name": "HitnDrop", "url": "https://hitndrop.fr", "platform": "shopify", "enabled": true },
     { "name": "Kairyu", "url": "https://kairyu.fr", "platform": "shopify", "enabled": true },
     { "name": "LemanTCG", "url": "https://www.lemantcg.com", "platform": "shopify", "enabled": false },

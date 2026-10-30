@@ -24,19 +24,61 @@ def load_json_file(filename):
             LOG.error(f"Erreur lecture {filename}: {e}")
     return {}
 
+def get_webhook_for_language(lang, webhooks):
+    """Détermine le bon webhook en fonction de la langue du produit."""
+    lang = (lang or "").strip().upper()
+    if lang in ["FR", "FRANCAIS", "FRENCH"]:
+        return webhooks.get("FRANCE")
+    elif lang in ["JP", "JAPON", "JAPANESE"]:
+        return webhooks.get("JAPON")
+    elif lang in ["EN", "ANGLAIS", "ENGLISH", "US", "UK"]:
+        return webhooks.get("ANGLAIS")
+    elif lang in ["KR", "COREE", "KOREAN"]:
+        return webhooks.get("COREE")
+    elif lang in ["CN", "CHINE", "CHINESE"]:
+        return webhooks.get("CHINE")
+    else:
+        return webhooks.get("FRANCE") or webhooks.get("AUTRE")
+
+def get_bot_identity_for_language(lang):
+    """Associe chaque langue/région au nom du bot et à son icône dédiée."""
+    lang = (lang or "").strip().upper()
+    if lang in ["FR", "FRANCAIS", "FRENCH"]:
+        return "Bot France", "https://i.imgur.com/example_fr.png"
+    elif lang in ["JP", "JAPON", "JAPANESE"]:
+        return "Bot Japon", "https://i.imgur.com/example_jp.png"
+    elif lang in ["EN", "ANGLAIS", "ENGLISH", "US", "UK"]:
+        return "Bot Anglais", "https://i.imgur.com/example_en.png"
+    elif lang in ["KR", "COREE", "KOREAN"]:
+        return "Bot Corée", "https://i.imgur.com/example_kr.png"
+    elif lang in ["CN", "CHINE", "CHINESE"]:
+        return "Bot Chine", "https://i.imgur.com/example_cn.png"
+    else:
+        return "Bot Autre", "https://i.imgur.com/example_autre.png"
+
 def main():
-    LOG.info("Démarrage d'une vérification ciblée des stocks...")
+    LOG.info("Démarrage d'une vérification ciblée des stocks avec routage et personnalisation des bots...")
     
     env_path = Path(".env")
     if env_path.exists():
         load_local_environment(env_path)
     
-    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+    webhooks = {
+        "FRANCE": os.environ.get("DISCORD_WEBHOOK_FRANCE"),
+        "JAPON": os.environ.get("DISCORD_WEBHOOK_JAPON"),
+        "ANGLAIS": os.environ.get("DISCORD_WEBHOOK_ANGLAIS"),
+        "COREE": os.environ.get("DISCORD_WEBHOOK_COREE"),
+        "CHINE": os.environ.get("DISCORD_WEBHOOK_CHINE"),
+        "AUTRE": os.environ.get("DISCORD_WEBHOOK_AUTRE"),
+        "LOGS": os.environ.get("DISCORD_WEBHOOK_LOGS"),
+    }
+    
     data = load_json_file("shops.json")
     products_config = load_json_file("products.json")
     
     shops_data = data.get("shops", data) if isinstance(data, dict) else data
     if not shops_data:
+        LOG.warning("Aucune boutique trouvée dans shops.json.")
         return
 
     shops = [s for s in shops_data if isinstance(s, dict) and s.get("enabled", True)]
@@ -53,15 +95,26 @@ def main():
         LOG.info(f"Vérification de la boutique ({platform}) : {store_name}...")
         
         items = []
-        if platform == "shopify":
-            items = fetch_shopify_catalog(store)
-        elif platform in ["prestashop", "prestashop_json"]:
-            items = fetch_prestashop_catalog(store)
-        elif platform == "woocommerce":
-            items = fetch_woocommerce_catalog(store)
-        elif platform in ["ultrajeux_html", "parkage_api", "philibert_html"]:
-            items = fetch_generic_catalog(store)
-        else:
+        try:
+            if platform == "shopify":
+                items = fetch_shopify_catalog(store)
+            elif platform in ["prestashop", "prestashop_json"]:
+                items = fetch_prestashop_catalog(store)
+            elif platform == "woocommerce":
+                items = fetch_woocommerce_catalog(store)
+            elif platform in ["ultrajeux_html", "parkage_api", "philibert_html", "html_generic"]:
+                items = fetch_generic_catalog(store)
+            else:
+                continue
+        except Exception as e:
+            LOG.error(f"Erreur lors du fetch pour {store_name}: {e}")
+            if webhooks["LOGS"]:
+                send_discord_alert(
+                    webhooks["LOGS"], 
+                    f"⚠️ **{store_name}** : Erreur technique pendant la lecture du catalogue\n`{e}`",
+                    bot_name="Logs Bot",
+                    bot_avatar="https://i.imgur.com/example_porygon.png"
+                )
             continue
             
         if not items:
@@ -73,13 +126,28 @@ def main():
             title = item.get("title", "")
             in_stock = item.get("in_stock", True)
             
-            if in_stock and match_product(title, products_config):
+            matched_product = match_product(title, products_config)
+            if in_stock and matched_product:
                 product_key = f"{store_name}:{title}"
                 
                 if product_key not in seen_stocks:
                     LOG.info(f"🚨 Nouveau restock détecté : {title} sur {store_name}")
-                    if webhook_url:
-                        send_discord_alert(webhook_url, f"🚨 **Restock !**\nProduit : {title}\nBoutique : {store_name}")
+                    
+                    product_lang = "FR"
+                    if isinstance(matched_product, dict):
+                        product_lang = matched_product.get("lang", "FR")
+                    
+                    target_webhook = get_webhook_for_language(product_lang, webhooks)
+                    bot_name, bot_avatar = get_bot_identity_for_language(product_lang)
+                    
+                    if target_webhook:
+                        send_discord_alert(
+                            target_webhook, 
+                            f"🚨 **Restock !**\nProduit : {title}\nBoutique : {store_name}",
+                            bot_name=bot_name,
+                            bot_avatar=bot_avatar
+                        )
+                    
                     notifier_dashboard_flask()
                     alerts_sent += 1
                 

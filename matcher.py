@@ -15,32 +15,41 @@ def contains_product_term(normalized_title, term):
     if not norm_term:
         return False
     
-    # Utilisation d'expressions régulières pour les mots entiers ou correspondances propres
     pattern = r'\b' + re.escape(norm_term) + r'\b'
     if re.search(pattern, normalized_title):
         return True
         
-    # Fallback si le terme est contenu directement
     if norm_term in normalized_title:
         return True
         
     return False
 
 def match_product(title, products_config):
-    """Détermine si un produit correspond aux critères de recherche configurés."""
+    """Détermine si un produit correspond aux critères et renvoie ses détails (ou True par défaut)."""
     normalized_title = normalize(title)
     
+    # Si products_config est une liste de dictionnaires ou de mots-clés
     if isinstance(products_config, list):
-        for term in products_config:
-            if isinstance(term, str) and contains_product_term(normalized_title, term):
-                return True
+        for item in products_config:
+            if isinstance(item, dict):
+                term = item.get("name", "") or item.get("term", "")
+                if term and contains_product_term(normalized_title, term):
+                    return item  # Renvoie l'objet complet (avec sa langue potentielle)
+            elif isinstance(item, str):
+                if contains_product_term(normalized_title, item):
+                    return {"name": item, "lang": "FR"}  # Valeur par défaut
+                    
+    # Si products_config est un dictionnaire
     elif isinstance(products_config, dict):
-        for term in products_config.keys():
+        for term, details in products_config.items():
             if contains_product_term(normalized_title, term):
-                return True
+                if isinstance(details, dict):
+                    details["name"] = term
+                    return details
+                return {"name": term, "lang": "FR"}
                 
     # Par défaut, si aucun produit spécifique n'est configuré, on cherche "pokemon"
     if not products_config and contains_product_term(normalized_title, "pokemon"):
-        return True
+        return {"name": "pokemon", "lang": "FR"}
         
-    return False
+    return None
