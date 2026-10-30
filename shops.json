@@ -1,115 +1,27 @@
 {
   "shops": [
-    {
-      "name": "Ultra-Jeux",
-      "url": "https://ultrajeux.com",
-      "source_mode": "auto",
-      "platform": "ultrajeux_html",
-      "product_limit": 250,
-      "catalog_urls": [
-        "https://ultrajeux.com/cat-1-4-469-boite-de-boosters-francais.html",
-        "https://ultrajeux.com/cat-1-4-470-boite-de-boosters-anglais.html",
-        "https://ultrajeux.com/cat-1-4-497-booster-francais-sous-blisters.html",
-        "https://ultrajeux.com/cat-1-4-505-etb-coffret-dresseur-d-elite.html",
-        "https://ultrajeux.com/cat-1-4-522-coffret-collection-ultra-premium.html",
-        "https://ultrajeux.com/cat-1-4-523-bundle-de-6-boosters.html",
-        "https://ultrajeux.com/cat-1-4-81-pokebox.html",
-        "https://ultrajeux.com/cat-1-4-488-mini-tin.html",
-        "https://ultrajeux.com/cat-1-4-514-coffret-3-boosters.html"
-      ],
-      "feed_url": null,
-      "feed_format": "auto"
-    },
-    {
-      "name": "Parkage",
-      "url": "https://parkage.com",
-      "source_mode": "auto",
-      "feed_url": null,
-      "feed_format": "auto",
-      "platform": "parkage_api"
-    },
-    {
-      "name": "Poke-Geek",
-      "url": "https://www.poke-geek.fr",
-      "platform": "shopify",
-      "source_mode": "auto",
-      "collections": [
-        "produits-scelles-fr",
-        "produit-scelle-japonais",
-        "produit-scelle-anglais",
-        "produit-scelle-coreen",
-        "precommande"
-      ]
-    },
-    {
-      "name": "Monpokestore",
-      "url": "https://www.monpokestore.fr",
-      "platform": "shopify",
-      "source_mode": "auto",
-      "collections": [
-        "scelles",
-        "display",
-        "etb",
-        "coffret",
-        "trio-pack",
-        "booster-blister",
-        "pokebox-minitins",
-        "nouveautes"
-      ]
-    },
-    {
-      "name": "Blazing Tail",
-      "url": "https://www.blazingtail.fr",
-      "platform": "prestashop_json",
-      "source_mode": "auto",
-      "search_terms": [
-        "display pokemon",
-        "etb pokemon",
-        "coffret pokemon",
-        "booster pokemon",
-        "tripack pokemon",
-        "duopack pokemon",
-        "bundle pokemon",
-        "pokebox",
-        "tin pokemon",
-        "blister pokemon"
-      ],
-      "categories": [
-        "2060-nouveautes"
-      ]
-    },
-    {
-      "name": "LemanTCG",
-      "url": "https://lemantcg.fr",
-      "platform": "shopify",
-      "source_mode": "auto"
-    },
-    {
-      "name": "Pokelite",
-      "url": "https://www.pokelite.fr",
-      "platform": "woocommerce",
-      "source_mode": "auto"
-    },
-    {
-      "name": "HitnDrop",
-      "url": "https://hitndrop.com",
-      "platform": "shopify",
-      "source_mode": "auto"
-    },
-    {
-      "name": "Pikastore",
-      "url": "https://www.pikastore.fr",
-      "platform": "prestashop_json",
-      "source_mode": "auto"
-    },
-    {
-      "name": "Exemple Shopify (à copier)",
-      "url": "https://exemple-boutique.fr",
-      "platform": "shopify",
-      "source_mode": "auto",
-      "collection": "pokemon",
-      "product_limit": 250,
-      "enabled": false
-    }
+    { "name": "Blazing Tail", "url": "https://www.blazingtail.fr", "platform": "prestashop_json", "enabled": true },
+    { "name": "BrazStore", "url": "https://brazstore.fr", "platform": "shopify", "enabled": false },
+    { "name": "Cards Hunter", "url": "https://cardshunter.fr", "platform": "shopify", "enabled": false },
+    { "name": "HitnDrop", "url": "https://hitndrop.fr", "platform": "shopify", "enabled": true },
+    { "name": "Kairyu", "url": "https://kairyu.fr", "platform": "shopify", "enabled": true },
+    { "name": "LemanTCG", "url": "https://www.lemantcg.com", "platform": "shopify", "enabled": false },
+    { "name": "LorenzZone", "url": "https://lorenzzone.fr", "platform": "shopify", "enabled": false },
+    { "name": "masterset.store", "url": "https://masterset.store", "platform": "shopify", "enabled": true },
+    { "name": "Monpokestore", "url": "https://monpokestore.com", "platform": "shopify", "enabled": true },
+    { "name": "neyzertcg.com", "url": "https://neyzertcg.com", "platform": "shopify", "enabled": true },
+    { "name": "Parkage", "url": "https://www.parkage.com", "platform": "parkage_api", "enabled": true },
+    { "name": "Philibert", "url": "https://www.philibertnet.com", "platform": "philibert_html", "enabled": true },
+    { "name": "Pika-Boutique", "url": "https://pika-boutique.fr", "platform": "shopify", "enabled": true },
+    { "name": "pikadisplay.com", "url": "https://pikadisplay.com", "platform": "shopify", "enabled": true },
+    { "name": "Pikastore", "url": "https://www.pikastore.fr", "platform": "prestashop_json", "enabled": true },
+    { "name": "Poke-Geek", "url": "https://poke-geek.fr", "platform": "shopify", "enabled": true },
+    { "name": "PokeBase", "url": "https://pokebase.fr", "platform": "shopify", "enabled": false },
+    { "name": "Pokelite", "url": "https://www.pokelite.fr", "platform": "woocommerce", "enabled": true },
+    { "name": "PokeStation", "url": "https://pokestation.fr", "platform": "shopify", "enabled": true },
+    { "name": "tokyocards.com", "url": "https://tokyocards.com", "platform": "shopify", "enabled": true },
+    { "name": "Ultra-Jeux", "url": "https://www.ultra-jeux.com", "platform": "ultrajeux_html", "enabled": true },
+    { "name": "Dracaugames", "url": "https://www.dracaugames.com", "platform": "shopify", "enabled": true },
+    { "name": "RelicTCG", "url": "https://www.relictcg.com", "platform": "shopify", "enabled": true }
   ]
 }
