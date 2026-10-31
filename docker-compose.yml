@@ -21,7 +21,7 @@ services:
       - "60"
     restart: unless-stopped
     volumes:
-      - /home/lacanette/pokemon-restock:/app:ro
+      - /home/lacanette/pokemon-restock:/app
       - pokemon-restock-state:/data
 
   pokemon-restock-dashboard:
