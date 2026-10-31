@@ -1,62 +1,27 @@
 import os
+import sys
 import json
+import time
+import argparse
 import logging
 from pathlib import Path
-from config import load_local_environment
-from scraper import fetch_shopify_catalog
-from prestashop_scraper import fetch_prestashop_catalog
-from woocommerce_scraper import fetch_woocommerce_catalog
-from html_scraper import fetch_generic_catalog
-from matcher import match_product
-from state_manager import load_seen_stocks, save_seen_stocks
-from notifier import send_discord_alert, notifier_dashboard_flask
+from datetime import datetime, timezone
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-LOG = logging.getLogger("pokemon-restock")
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+LOG = logging.getLogger("PokemonRestock")
 
-def load_json_file(filename):
-    path = Path(filename)
-    if path.exists():
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            LOG.error(f"Erreur lecture {filename}: {e}")
-    return {}
+# --- PLACE TES FONCTIONS EXISTANTES ICI ---
+# (load_local_environment, load_json_file, load_seen_stocks, save_seen_stocks,
+#  fetch_shopify_catalog, fetch_prestashop_catalog, fetch_woocommerce_catalog,
+#  fetch_generic_catalog, match_product, get_webhook_for_language, 
+#  get_bot_identity_for_language, send_discord_alert, notifier_dashboard_flask, etc.)
 
-def get_webhook_for_language(lang, webhooks):
-    """Détermine le bon webhook en fonction de la langue du produit."""
-    lang = (lang or "").strip().upper()
-    if lang in ["FR", "FRANCAIS", "FRENCH"]:
-        return webhooks.get("FRANCE")
-    elif lang in ["JP", "JAPON", "JAPANESE"]:
-        return webhooks.get("JAPON")
-    elif lang in ["EN", "ANGLAIS", "ENGLISH", "US", "UK"]:
-        return webhooks.get("ANGLAIS")
-    elif lang in ["KR", "COREE", "KOREAN"]:
-        return webhooks.get("COREE")
-    elif lang in ["CN", "CHINE", "CHINESE"]:
-        return webhooks.get("CHINE")
-    else:
-        return webhooks.get("FRANCE") or webhooks.get("AUTRE")
-
-def get_bot_identity_for_language(lang):
-    """Associe chaque langue/région au nom du bot et à son icône dédiée."""
-    lang = (lang or "").strip().upper()
-    if lang in ["FR", "FRANCAIS", "FRENCH"]:
-        return "Bot France", "https://i.imgur.com/example_fr.png"
-    elif lang in ["JP", "JAPON", "JAPANESE"]:
-        return "Bot Japon", "https://i.imgur.com/example_jp.png"
-    elif lang in ["EN", "ANGLAIS", "ENGLISH", "US", "UK"]:
-        return "Bot Anglais", "https://i.imgur.com/example_en.png"
-    elif lang in ["KR", "COREE", "KOREAN"]:
-        return "Bot Corée", "https://i.imgur.com/example_kr.png"
-    elif lang in ["CN", "CHINE", "CHINESE"]:
-        return "Bot Chine", "https://i.imgur.com/example_cn.png"
-    else:
-        return "Bot Autre", "https://i.imgur.com/example_autre.png"
-
-def main():
+def run_check_cycle(args):
     LOG.info("Démarrage d'une vérification ciblée des stocks avec routage et personnalisation des bots...")
     
     env_path = Path(".env")
@@ -73,12 +38,13 @@ def main():
         "LOGS": os.environ.get("DISCORD_WEBHOOK_LOGS"),
     }
     
-    data = load_json_file("shops.json")
-    products_config = load_json_file("products.json")
+    # Utilisation des chemins passés en argument par Docker
+    data = load_json_file(args.shops)
+    products_config = load_json_file(args.config)
     
     shops_data = data.get("shops", data) if isinstance(data, dict) else data
     if not shops_data:
-        LOG.warning("Aucune boutique trouvée dans shops.json.")
+        LOG.warning("Aucune boutique trouvée dans le fichier de configuration des boutiques.")
         return
 
     shops = [s for s in shops_data if isinstance(s, dict) and s.get("enabled", True)]
@@ -154,7 +120,48 @@ def main():
                 new_seen_stocks.add(product_key)
 
     save_seen_stocks(new_seen_stocks)
+
+    # Mise à jour de l'horodatage du dashboard dans stock.json
+    stock_file = Path(args.stock)
+    if stock_file.exists():
+        try:
+            with stock_file.open("r", encoding="utf-8") as f:
+                stock_data = json.load(f)
+        except Exception:
+            stock_data = {"stores": {}}
+    else:
+        stock_data = {"stores": {}}
+    
+    stock_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        stock_file.parent.mkdir(parents=True, exist_ok=True)
+        with stock_file.open("w", encoding="utf-8") as f:
+            json.dump(stock_data, f, ensure_ascii=False, indent=2)
+        LOG.info("Horodatage 'updated_at' mis à jour avec succès dans stock.json.")
+    except Exception as e:
+        LOG.error(f"Erreur lors de l'écriture de l'horodatage dans stock.json : {e}")
+
     LOG.info(f"Vérification terminée. {alerts_sent} nouvelle(s) alerte(s) envoyée(s).")
 
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Bot de surveillance de restock Pokémon")
+    parser.add_argument("--config", default="products.json", help="Chemin vers products.json")
+    parser.add_argument("--shops", default="shops.json", help="Chemin vers shops.json")
+    parser.add_argument("--state", default="search_state.json", help="Chemin vers search_state.json")
+    parser.add_argument("--stock", default="stock.json", help="Chemin vers stock.json")
+    parser.add_argument("--market-cache", default="market_price_cache.json", help="Cache prix")
+    parser.add_argument("--interval", type=int, default=60, help="Intervalle en secondes entre chaque vérification")
+    
+    args = parser.parse_args()
+    
+    LOG.info(f"Lancement du service de restock en boucle (intervalle : {args.interval}s)")
+    
+    while True:
+        try:
+            run_check_cycle(args)
+        except Exception as e:
+            LOG.error(f"Erreur critique inattendue dans la boucle principale : {e}")
+        
+        LOG.info(prochain := f"Prochaine vérification dans {args.interval} secondes...")
+        time.sleep(args.interval)

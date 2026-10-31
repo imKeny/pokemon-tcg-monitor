@@ -69,6 +69,11 @@
         0% { background-position: 130% 0; }
         60%, 100% { background-position: -130% 0; }
       }
+      @keyframes pulse {
+        0% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.4; transform: scale(0.95); }
+        100% { opacity: 1; transform: scale(1); }
+      }
       h1 {
         display: inline-flex;
         align-items: center;
@@ -581,16 +586,25 @@
           <span class="pokeball title-pokeball" role="img" aria-label="Poké Ball"><svg viewBox="0 0 100 100"><use href="#pokeball-art"/></svg></span>
           Suivi Pokémon TCG
         </h1>
-        <p>
-          <span class="update-label">Dernier relevé</span>
-          <span class="last-update">
-            {% if updated_at %}
-              <time>{{ updated_at|local_datetime }}</time>
-            {% else %}
-              <span>En attente du premier relevé</span>
-            {% endif %}
+        <p style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem;">
+          <!-- Indicateur Bot Actif avec point vert -->
+          <span style="display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.6rem; border: 1px solid #234832; border-radius: 999px; background: #0e2417; color: #4ade80; font-size: 0.78rem; font-weight: 700;">
+            <span style="width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: pulse 2s infinite;"></span>
+            Bot actif
           </span>
-          <span aria-hidden="true"> · </span> actualisation toutes les 60 secondes
+
+          <span style="color: #64748b;" aria-hidden="true">|</span>
+
+          <span>
+            <span class="update-label">Dernier relevé</span>
+            <span class="last-update">
+              {% if updated_at %}
+                <time>{{ updated_at|local_datetime }}</time>
+              {% else %}
+                <span>En attente du premier relevé</span>
+              {% endif %}
+            </span>
+          </span>
         </p>
         <div class="search-panel">
           <label class="search-box">

@@ -6,7 +6,7 @@ services:
     command:
       - python
       - -u
-      - monitor.py
+      - main.py
       - --config
       - /app/products.json
       - --shops
@@ -23,6 +23,7 @@ services:
     volumes:
       - /home/lacanette/pokemon-restock:/app:ro
       - pokemon-restock-state:/data
+
   pokemon-restock-dashboard:
     image: pokemon-restock:local
     container_name: pokemon-restock-dashboard
@@ -39,8 +40,9 @@ services:
       - pokemon-restock
     restart: unless-stopped
     volumes:
-      - /home/lacanette/pokemon-restock:/app:ro
+      - /home/lacanette/pokemon-restock:/app
       - pokemon-restock-state:/data:ro
+
   dashboard-tunnel:
     image: ngrok/ngrok:latest
     profiles:
