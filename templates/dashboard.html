@@ -625,6 +625,11 @@
             <span>Langue</span>
             <select id="filter-lang"><option value="">Toutes les langues</option></select>
           </label>
+          <!-- Nouveau filtre Collection / Série -->
+          <label class="filter-field">
+            <span>Collection / Série</span>
+            <select id="filter-series"><option value="">Toutes les séries</option></select>
+          </label>
           <label class="filter-field">
             <span>Trier par</span>
             <select id="sort-by">
@@ -677,7 +682,7 @@
     {% set retail_reference = product.get("retail_reference") or {} %}
     {% set series = product.get("name", "")|series(product.get("series_keywords", "")) %}
     {% set status = product|product_status %}
-    <article class="product-card" data-product-card{% if unified %} data-unified-card{% endif %} data-status="{{ status }}" data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-deal="{{ 1 if product.get('is_good_deal') else 0 }}" data-delta="{{ product.get('price_delta_percent') if product.get('price_delta_percent') is not none else '' }}" data-order="{{ order }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series ~ ' ' ~ store.get('name', ''))|e }}">
+    <article class="product-card" data-product-card{% if unified %} data-unified-card{% endif %} data-status="{{ status }}" data-store-index="{{ store_index }}" data-kind="{{ product.get('name', '')|product_kind(product.get('series_keywords', ''))|e }}" data-lang="{{ product.get('name', '')|product_language(product.get('series_keywords', ''))|e }}" data-series="{{ series|e }}" data-price="{{ product.get('price') if product.get('price') is not none else '' }}" data-stock="{{ product.get('quantity') if product.get('quantity') is not none else '' }}" data-recent="{{ 1 if product.get('is_recent') else 0 }}" data-preorder="{{ 1 if product.get('is_preorder') else 0 }}" data-hot="{{ 1 if product.get('is_hot_series') else 0 }}" data-deal="{{ 1 if product.get('is_good_deal') else 0 }}" data-delta="{{ product.get('price_delta_percent') if product.get('price_delta_percent') is not none else '' }}" data-order="{{ order }}" data-search="{{ (product.get('name', '') ~ ' ' ~ product.get('series_keywords', '') ~ ' ' ~ series)|e }}">
       <div class="product-image">
         {% if product.get("image") %}
           <a class="product-image-link" href="{{ product.get('url') }}" target="_blank" rel="noopener noreferrer" aria-label="Voir {{ product.get('name', 'le produit') }} sur le site marchand">
@@ -870,11 +875,13 @@
         const storeFilters = [...document.querySelectorAll("[data-store-filter]")];
         const kindSelect = document.getElementById("filter-kind");
         const langSelect = document.getElementById("filter-lang");
+        const seriesSelect = document.getElementById("filter-series");
         const sortSelect = document.getElementById("sort-by");
         const statusSelect = document.getElementById("filter-status");
         const resetButton = document.getElementById("filter-reset");
         const FILTERS_KEY = "pokemon-dashboard-filters";
         let selectedStore = "all";
+
         const fillOptions = (select, key) => {
           const counts = new Map();
           for (const card of storeCards) {
@@ -888,8 +895,11 @@
             select.append(option);
           });
         };
+
         fillOptions(kindSelect, "kind");
         fillOptions(langSelect, "lang");
+        fillOptions(seriesSelect, "series");
+
         const num = (value, fallback) => (value === "" || value === undefined || Number.isNaN(Number(value)) ? fallback : Number(value));
         const comparators = {
           default: (a, b) => num(a.dataset.order, 0) - num(b.dataset.order, 0),
@@ -924,10 +934,11 @@
               || card.dataset.storeIndex === selectedStore;
             const matchesKind = !kindSelect.value || card.dataset.kind === kindSelect.value;
             const matchesLang = !langSelect.value || card.dataset.lang === langSelect.value;
+            const matchesSeries = !seriesSelect.value || card.dataset.series === seriesSelect.value;
             const status = statusSelect.value;
             const matchesStatus = !status
               || (status === "deal" ? card.dataset.deal === "1" : card.dataset.status === status);
-            const matches = matchesSearch && matchesStore && matchesKind && matchesLang && matchesStatus;
+            const matches = matchesSearch && matchesStore && matchesKind && matchesLang && matchesSeries && matchesStatus;
             card.hidden = !matches;
             const inCurrentView = card.hasAttribute("data-unified-card") === (currentView === "unified");
             if (matches && inCurrentView) visibleCount += 1;
@@ -946,6 +957,7 @@
             search: searchInput.value,
             kind: kindSelect.value,
             lang: langSelect.value,
+            series: seriesSelect.value,
             status: statusSelect.value,
             sort: sortSelect.value,
             store: selectedStore,
@@ -957,6 +969,7 @@
           searchInput.value = saved.search || "";
           kindSelect.value = saved.kind || "";
           langSelect.value = saved.lang || "";
+          seriesSelect.value = saved.series || "";
           statusSelect.value = saved.status || "";
           sortSelect.value = saved.sort || "default";
           const savedStore = String(saved.store ?? "all");
@@ -970,12 +983,13 @@
           localStorage.removeItem(FILTERS_KEY);
         }
         searchInput.addEventListener("input", applyFilter);
-        for (const select of [kindSelect, langSelect, sortSelect, statusSelect]) {
+        for (const select of [kindSelect, langSelect, seriesSelect, sortSelect, statusSelect]) {
           select.addEventListener("change", applyFilter);
         }
         resetButton.addEventListener("click", () => {
           kindSelect.value = "";
           langSelect.value = "";
+          seriesSelect.value = "";
           statusSelect.value = "";
           sortSelect.value = "default";
           searchInput.value = "";
