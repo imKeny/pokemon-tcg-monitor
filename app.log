@@ -1,0 +1,19 @@
+nohup: ignoring input
+ * Tip: There are .env files present. Install python-dotenv to use them.
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://192.168.1.28:5050
+[33mPress CTRL+C to quit[0m
+192.168.1.25 - - [31/Oct/2026 03:47:19] "GET / HTTP/1.1" 200 -
+192.168.1.25 - - [31/Oct/2026 03:47:20] "[36mGET /static/css/dashboard.css HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:47:20] "[36mGET /static/js/dashboard.js HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:47:22] "[36mGET /logo.jpg HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:47:22] "[36mGET /logo.jpg HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:51:51] "GET / HTTP/1.1" 200 -
+192.168.1.25 - - [31/Oct/2026 03:51:51] "[36mGET /static/css/dashboard.css HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:51:52] "[36mGET /static/js/dashboard.js HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:51:54] "[36mGET /logo.jpg HTTP/1.1[0m" 304 -
+192.168.1.25 - - [31/Oct/2026 03:51:54] "[36mGET /logo.jpg HTTP/1.1[0m" 304 -

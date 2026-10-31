@@ -16,6 +16,7 @@ from flask import Flask, render_template, send_from_directory, Response
 
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 STOCK_FILE = Path(
     os.environ.get(
         "STOCK_FILE",
@@ -548,4 +549,4 @@ def dashboard():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5050, debug=False)
