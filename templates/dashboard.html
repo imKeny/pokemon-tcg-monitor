@@ -3,7 +3,6 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="60">
     <meta name="theme-color" content="#10131b">
     <title>Suivi Pokémon TCG</title>
     <link rel="icon" type="image/jpeg" href="/logo.jpg">
@@ -953,7 +952,6 @@
           }));
         };
 
-        // La page se recharge toutes les 60 s : on restaure les filtres sauvegardés.
         try {
           const saved = JSON.parse(localStorage.getItem(FILTERS_KEY) || "{}");
           searchInput.value = saved.search || "";
@@ -1010,6 +1008,19 @@
         }
         setView(currentView);
       })();
+    </script>
+
+    <!-- Script de mise à jour en temps réel (SSE) -->
+    <script>
+      if (!!window.EventSource) {
+        var source = new EventSource('/stream');
+        source.onmessage = function(e) {
+          if (e.data === "update") {
+            console.log("Restock détecté ! Rechargement du dashboard...");
+            location.reload();
+          }
+        };
+      }
     </script>
   </body>
 </html>

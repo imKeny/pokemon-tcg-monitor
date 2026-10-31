@@ -10,8 +10,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
+import queue
 
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, render_template, send_from_directory, Response
 
 
 app = Flask(__name__)
@@ -381,7 +382,6 @@ def _same_product(first, second):
     if not smaller:
         return False
     overlap = len(first["tokens"] & second["tokens"]) / smaller
-    # Sans code d'extension, on exige des noms presque identiques.
     return overlap >= (0.75 if first["code"] else 0.9)
 
 
@@ -441,6 +441,34 @@ app.jinja_env.filters["product_status"] = identify_product_status
 app.jinja_env.filters["product_language"] = identify_product_language
 app.jinja_env.filters["local_datetime"] = format_local_datetime
 app.jinja_env.filters["series"] = identify_series
+
+
+# --- SYSTÈME DE NOTIFICATION EN TEMPS RÉEL (SSE) ---
+clients_subscribers = []
+
+def notifier_dashboard_flask():
+    """Appelé par le bot dès qu'un restock est détecté pour prévenir le dashboard."""
+    for q in list(clients_subscribers):
+        try:
+            q.put("update")
+        except Exception:
+            clients_subscribers.remove(q)
+
+@app.get("/stream")
+def stream():
+    """Flux Server-Sent Events (SSE) pour notifier le navigateur en direct."""
+    def event_stream():
+        q = queue.Queue()
+        clients_subscribers.append(q)
+        try:
+            while True:
+                message = q.get()
+                yield f"data: {message}\n\n"
+        except GeneratorExit:
+            if q in clients_subscribers:
+                clients_subscribers.remove(q)
+    return Response(event_stream(), mimetype="text/event-stream")
+# --------------------------------------------------
 
 
 @app.get("/logo.jpg")
