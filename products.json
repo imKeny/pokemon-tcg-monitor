@@ -1,13 +1,45 @@
 {
-  "stores": [
+  "products": [
+    {
+      "name": "Pokémon Scellé France",
+      "keywords": [
+        "pokemon", "pokémon", "ev0", "eb0", "me0", "dresseur d'élite", "tripack", "duopack", "pokeball", "pokéball", "pokebox", "pokébox", "blister", "coffret dracaufeu", "coffret amphinobi", "coffret mega", "coffret méga"
+      ],
+      "language": "FRANCE"
+    },
+    {
+      "name": "Pokémon Scellé Japon",
+      "keywords": [
+        "🇯🇵", "(m1s)", "(m2)", "(m2a)", "(m4)", "(m5)", "(m6)", "(m6a)", "jp", "japonais", "terastal gathering"
+      ],
+      "language": "JAPON"
+    },
+    {
+      "name": "Pokémon Scellé Chine",
+      "keywords": [
+        "🇨🇳", "chinois", "cshc", "csfm"
+      ],
+      "language": "CHINE"
+    },
+    {
+      "name": "Pokémon Scellé Anglais",
+      "keywords": [
+        "🇬🇧", "english", "booster bundle", "ultra-premium collection"
+      ],
+      "language": "ANGLAIS"
+    }
+  ],
+  "shops": [
     {
       "name": "Pika-Boutique",
       "url": "https://pika-boutique.fr",
+      "platform": "shopify",
       "product_limit": 100
     },
     {
       "name": "LorenzZone",
       "url": "https://lorenzone.fr",
+      "platform": "shopify",
       "collection": "produits-officiels-pokemon"
     },
     {
@@ -15,13 +47,12 @@
       "url": "https://www.cardshunter.fr",
       "platform": "woocommerce",
       "product_limit": 100,
-      "product_category_ids": [
-        221
-      ]
+      "product_category_ids": [221]
     },
     {
       "name": "Kairyu",
       "url": "https://kairyu.fr",
+      "platform": "shopify",
       "collections": [
         "frjap-scelle",
         "display",
@@ -35,6 +66,7 @@
     {
       "name": "PokeStation",
       "url": "https://pokestation.fr",
+      "platform": "shopify",
       "product_limit": 100
     },
     {
@@ -42,6 +74,12 @@
       "url": "https://www.philibertnet.com",
       "platform": "philibert_html",
       "catalog_url": "https://www.philibertnet.com/fr/212-pokemon",
+      "product_limit": 100
+    },
+    {
+      "name": "HitnDrop",
+      "url": "https://hitndrop.fr",
+      "platform": "shopify",
       "product_limit": 100
     }
   ],
@@ -58,48 +96,6 @@
       "label": "ETB standard",
       "minimum": "54.99",
       "maximum": "59.99"
-    },
-    {
-      "category": "duopack_tripack",
-      "label": "Duopack / Tripack",
-      "minimum": "11.99",
-      "maximum": "13.50"
-    },
-    {
-      "category": "coffret",
-      "label": "Coffret Pokémon",
-      "minimum": "44.99",
-      "maximum": "54.99"
-    },
-    {
-      "category": "tin_cube",
-      "label": "Tin Cube / Pokébox",
-      "minimum": "24.99",
-      "maximum": "25.90"
-    },
-    {
-      "category": "mini_tin",
-      "label": "Mini Tin",
-      "minimum": "10.99",
-      "maximum": "11.99"
-    },
-    {
-      "category": "bundle_6",
-      "label": "Bundle 6 boosters",
-      "minimum": "29.99",
-      "maximum": "29.99"
-    },
-    {
-      "category": "japanese_box_30",
-      "label": "Boîte japonaise 30 boosters",
-      "minimum": "35.00",
-      "maximum": "35.00"
-    },
-    {
-      "category": "chinese_display_15",
-      "label": "Display chinois 15 boosters",
-      "minimum": "30.00",
-      "maximum": "30.00"
     }
   ]
 }
